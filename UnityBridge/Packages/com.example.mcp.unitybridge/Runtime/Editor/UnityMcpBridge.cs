@@ -179,7 +179,7 @@ namespace MCP.UnityBridge
                     }
                     try { LogBridge($"-> {path} {Trunc(body, 512)}"); } catch { }
 
-                    if (path == "/menu/execute")
+                    if (path == "/menu/execute" || path == "/editor/executeMenuItem")
                     {
                         var req = JsonUtility.FromJson<MenuExecuteRequest>(body);
                         var ok = await RunOnMainThread(() => ExecuteMenu(req.menuPath));
@@ -583,6 +583,32 @@ namespace MCP.UnityBridge
                         await WriteJson(ctx, ok ? Ok(new ShownResponse { shown = true }) : Err("Failed to revert prefab"));
                         return;
                     }
+                    if (path == "/prefab/create")
+                    {
+                        var req = JsonUtility.FromJson<PrefabCreateRequest>(body);
+                        var resp = await RunOnMainThread(() =>
+                        {
+                            var go = FindTarget(req.path, req.instanceId);
+                            if (go == null) return (ok: false, json: Err("GameObject not found"));
+#if UNITY_EDITOR
+                            try
+                            {
+                                var savedPath = SaveAsPrefab(go, req.assetPath, req.connect, req.overwrite);
+                                return string.IsNullOrEmpty(savedPath)
+                                    ? (ok: false, json: Err("Failed to create prefab"))
+                                    : (ok: true, json: Ok(new PathResponse { path = savedPath }));
+                            }
+                            catch (Exception ex)
+                            {
+                                return (ok: false, json: Err("Prefab create failed: " + ex.Message));
+                            }
+#else
+                            return (ok: false, json: Err("Editor only"));
+#endif
+                        });
+                        await WriteJson(ctx, resp.json);
+                        return;
+                    }
                     if (path == "/component/get")
                     {
                         var req = JsonUtility.FromJson<ComponentGetRequest>(body);
@@ -819,6 +845,28 @@ namespace MCP.UnityBridge
                         {
                             var obj = InstantiateAsset(req.assetPath, req.parentPath);
                             if (obj == null) return (ok: false, body: "");
+                            return (ok: true, body: Ok(new InstantiatedResponse { path = GetPath(obj.transform), instanceId = obj.GetInstanceID() }));
+                        });
+                        if (!resp.ok) { await WriteJson(ctx, Err("Asset not found or not instantiable")); return; }
+                        await WriteJson(ctx, resp.body);
+                        return;
+                    }
+                    if (path == "/asset/addToScene")
+                    {
+                        var req = JsonUtility.FromJson<AssetAddToSceneRequest>(body);
+                        var resp = await RunOnMainThread(() =>
+                        {
+                            var obj = InstantiateAsset(req.assetPath, req.parentPath);
+                            if (obj == null) return (ok: false, body: "");
+                            var t = obj.transform;
+                            if (BodyHas(body, "position") && req.position != null) t.position = new Vector3(req.position.x, req.position.y, req.position.z);
+                            if (BodyHas(body, "localPosition") && req.localPosition != null) t.localPosition = new Vector3(req.localPosition.x, req.localPosition.y, req.localPosition.z);
+                            if (BodyHas(body, "eulerAngles") && req.eulerAngles != null) t.eulerAngles = new Vector3(req.eulerAngles.x, req.eulerAngles.y, req.eulerAngles.z);
+                            if (BodyHas(body, "localEulerAngles") && req.localEulerAngles != null) t.localEulerAngles = new Vector3(req.localEulerAngles.x, req.localEulerAngles.y, req.localEulerAngles.z);
+                            if (BodyHas(body, "localScale") && req.localScale != null) t.localScale = new Vector3(req.localScale.x, req.localScale.y, req.localScale.z);
+                            EditorUtility.SetDirty(obj);
+                            EditorSceneManager.MarkSceneDirty(obj.scene);
+                            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                             return (ok: true, body: Ok(new InstantiatedResponse { path = GetPath(obj.transform), instanceId = obj.GetInstanceID() }));
                         });
                         if (!resp.ok) { await WriteJson(ctx, Err("Asset not found or not instantiable")); return; }
@@ -1142,6 +1190,50 @@ namespace MCP.UnityBridge
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
             
             return instance;
+#else
+            return null;
+#endif
+        }
+
+        private static string SaveAsPrefab(GameObject go, string assetPath, bool connect, bool overwrite)
+        {
+#if UNITY_EDITOR
+            if (go == null) return null;
+            if (string.IsNullOrEmpty(assetPath) || !assetPath.StartsWith("Assets"))
+            {
+                try { assetPath = "Assets/" + (go.name ?? "NewPrefab") + ".prefab"; } catch { assetPath = "Assets/NewPrefab.prefab"; }
+            }
+            var projectDir = System.IO.Path.GetDirectoryName(Application.dataPath);
+            var absPath = System.IO.Path.Combine(projectDir, assetPath);
+            var dir = System.IO.Path.GetDirectoryName(absPath);
+            try { System.IO.Directory.CreateDirectory(dir); } catch { }
+
+            if (!overwrite && System.IO.File.Exists(absPath))
+            {
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
+                var folder = System.IO.Path.GetDirectoryName(assetPath).Replace("\\", "/");
+                if (string.IsNullOrEmpty(folder)) folder = "Assets";
+                for (int i = 1; i < 1000; i++)
+                {
+                    var cand = (string.IsNullOrEmpty(folder) ? "" : folder + "/") + baseName + "_" + i + ".prefab";
+                    var candAbs = System.IO.Path.Combine(projectDir, cand);
+                    if (!System.IO.File.Exists(candAbs)) { assetPath = cand; break; }
+                }
+            }
+
+            GameObject result = null;
+            try
+            {
+                if (connect)
+                    result = PrefabUtility.SaveAsPrefabAssetAndConnect(go, assetPath, InteractionMode.AutomatedAction);
+                else
+                    result = PrefabUtility.SaveAsPrefabAsset(go, assetPath);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+            catch { return null; }
+
+            return result != null ? assetPath : null;
 #else
             return null;
 #endif
@@ -1859,6 +1951,7 @@ namespace MCP.UnityBridge
         [Serializable] private class SceneOpenRequest { public string path; public bool additive; }
         [Serializable] private class SceneSaveRequest { public string path; }
         [Serializable] private class PrefabOpRequest { public string path; public int? instanceId; }
+        [Serializable] private class PrefabCreateRequest { public string path; public int? instanceId; public string assetPath; public bool connect; public bool overwrite; }
         [Serializable] private class ComponentGetRequest { public string path; public int? instanceId; public string componentType; }
         [Serializable] private class MemorySnapshotRequest { public string path; }
         [Serializable] private class ImportTextureRequest { public string assetPath; public string textureType; public bool sRGB; public int maxSize; public int compressionQuality; public string textureCompression; }
@@ -2377,6 +2470,8 @@ namespace MCP.UnityBridge
 
         [Serializable]
         private class InstantiateAssetRequest { public string assetPath; public string parentPath; }
+        [Serializable]
+        private class AssetAddToSceneRequest { public string assetPath; public string parentPath; public Vec3 position; public Vec3 localPosition; public Vec3 eulerAngles; public Vec3 localEulerAngles; public Vec3 localScale; }
 
         [Serializable]
         private class PauseRequest { public bool pause; }
