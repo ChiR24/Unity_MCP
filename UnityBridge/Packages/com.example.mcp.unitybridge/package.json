@@ -1,0 +1,16 @@
+{
+  "name": "com.example.mcp.unitybridge",
+  "displayName": "MCP Unity Bridge",
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "description": "Local HTTP bridge exposing safe Unity Editor operations for an MCP server.",
+  "author": "Your Name",
+  "dependencies": {
+  }
+}
+
+
+
+
+
+

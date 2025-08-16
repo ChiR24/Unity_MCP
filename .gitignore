@@ -1,0 +1,26 @@
+# Unity
+Library/
+Temp/
+Obj/
+Logs/
+MemoryCaptures/
+Build/
+
+# Rider/VS/IDE
+.vscode/
+.vs/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+client/node_modules/
+server/node_modules/
+client/dist/
+server/dist/
+
+# Env and local files
+*.env
+server/.env

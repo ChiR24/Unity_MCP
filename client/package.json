@@ -1,0 +1,24 @@
+{
+  "name": "mcp-unity-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sample MCP client that connects to the Unity MCP server via stdio and exercises tools",
+  "scripts": {
+    "dev": "tsx src/client.ts",
+    "start": "node dist/client.js",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
+
+
+
