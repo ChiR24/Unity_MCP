@@ -282,16 +282,44 @@ export function getServer() {
     },
     {
       name: "unity_assets",
-      description: "AssetDatabase operations: list assets, find by query, or refresh the database (action=list|find|refresh)",
+      description: "Asset operations: list/find/refresh database, or instantiate assets into scene",
       inputSchema: {
         type: "object",
         properties: {
-          action: { type: "string", description: "'list' all assets under a folder, 'find' by AssetDatabase query, or 'refresh' AssetDatabase", enum: ["list", "find", "refresh"] },
-          path: { type: "string", description: "Folder path under Assets to search/list (e.g., 'Assets' or 'Assets/Prefabs'). Optional (list)." },
-          query: { type: "string", description: "AssetDatabase search filter for 'find' (e.g., 't:Prefab', 't:Material myName')." },
+          action: { 
+            type: "string", 
+            description: "'list' assets, 'find' by query, 'refresh' database, or 'instantiate' asset into scene", 
+            enum: ["list", "find", "refresh", "instantiate"] 
+          },
+          // AssetDatabase operations
+          path: { type: "string", description: "Folder path for list (e.g., 'Assets/Prefabs') or GameObject parent path for instantiate" },
+          query: { type: "string", description: "AssetDatabase search filter for find (e.g., 't:Prefab', 't:Material myName')" },
+          // Instantiate operations
+          assetPath: { type: "string", description: "Asset path to instantiate (e.g., 'Assets/Prefabs/Cube.prefab')" },
+          parentPath: { type: "string", description: "Optional parent GameObject path for instantiated object" },
+          position: { type: "object", description: "World position {x, y, z}", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
+          localPosition: { type: "object", description: "Local position {x, y, z}", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
+          localScale: { type: "object", description: "Local scale {x, y, z}", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
         },
       },
-      handler: unityAssetsHandler,
+      handler: async (args) => {
+        const { action, assetPath } = args as { action?: string; assetPath?: string };
+        const act = String(action ?? "list").toLowerCase();
+        
+        // Original AssetDatabase operations
+        if (act === "find" || act === "list" || act === "refresh") {
+          return unityAssetsHandler(args);
+        }
+        
+        // Instantiate operation (from unity_asset)
+        if (act === "instantiate") {
+          if (!assetPath) return { content: [{ type: "text", text: "assetPath required for instantiate" }], isError: true };
+          const res = await callUnity<{ path: string; instanceId: number }>("/asset/instantiate", args);
+          return { content: [{ type: "text", text: `Instantiated ${res.path} (id ${res.instanceId})` }] };
+        }
+        
+        return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
+      },
     },
     {
       name: "unity_selection",
@@ -708,13 +736,16 @@ export function getServer() {
     },
     {
       name: "unity_prefab",
-      description: "Prefab ops (action=apply|revert) for an instance by path or instanceId",
+      description: "Prefab ops (action=apply|revert|create) for an instance by path or instanceId",
       inputSchema: {
         type: "object",
         properties: {
-          action: { type: "string", description: "'apply' instance overrides back to prefab, or 'revert' instance to prefab.", enum: ["apply", "revert"] },
+          action: { type: "string", description: "'apply' instance overrides back to prefab, 'revert' instance to prefab, or 'create' a prefab asset from a scene object.", enum: ["apply", "revert", "create"] },
           path: { type: "string", description: "Instance GameObject path or name (alternative to instanceId)." },
           instanceId: { type: "number", description: "Instance GameObject instance ID." },
+          assetPath: { type: "string", description: "Target prefab asset path (e.g., 'Assets/Prefabs/My.prefab'). Optional when action='create'." },
+          connect: { type: "boolean", description: "When action='create', connect the scene instance to the saved prefab." },
+          overwrite: { type: "boolean", description: "When action='create', if false and file exists, auto-increment file name instead of overwriting." },
         },
       },
       handler: async (args) => {
@@ -722,6 +753,12 @@ export function getServer() {
         const act = String(action ?? "apply").toLowerCase();
         if (act === "apply") { await callUnity("/prefab/apply", args); return { content: [{ type: "text", text: "Applied" }] }; }
         if (act === "revert") { await callUnity("/prefab/revert", args); return { content: [{ type: "text", text: "Reverted" }] }; }
+        if (act === "create") {
+          const res = await callUnity<{ path: string } | null>("/prefab/create", args);
+          const saved = res?.path;
+          if (!saved) return { content: [{ type: "text", text: "Failed to create prefab" }], isError: true };
+          return { content: [{ type: "text", text: `Created prefab at ${saved}` }] };
+        }
         return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
       },
     },
@@ -794,26 +831,6 @@ export function getServer() {
         if (act !== "execute") return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
         await callUnity("/menu/execute", args);
         return { content: [{ type: "text", text: "Executed" }] };
-      },
-    },
-    {
-      name: "unity_asset",
-      description: "Instantiate assets into the scene (action=instantiate)",
-      inputSchema: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["instantiate"] },
-          assetPath: { type: "string", description: "Asset path in project (e.g., 'Assets/Prefabs/Cube.prefab')" },
-          parentPath: { type: "string", description: "Optional parent GameObject path" },
-        },
-        required: ["assetPath"],
-      },
-      handler: async (args) => {
-        const { action } = args as { action?: string };
-        const act = String(action ?? "instantiate").toLowerCase();
-        if (act !== "instantiate") return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
-        const res = await callUnity<{ path: string; instanceId: number }>("/asset/instantiate", args);
-        return { content: [{ type: "text", text: `Instantiated ${res.path} (id ${res.instanceId})` }] };
       },
     },
     {
