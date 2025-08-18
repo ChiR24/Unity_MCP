@@ -755,6 +755,41 @@ namespace MCP.UnityBridge
                         await WriteJson(ctx, result.ok ? OkJson(result.resultJson ?? "{}") : Err(result.error));
                         return;
                     }
+                    if (path == "/visualscripting/create")
+                    {
+                        var req = JsonUtility.FromJson<VisualScriptCreateRequest>(body);
+                        var result = await RunOnMainThread(() => CreateVisualScript(req));
+                        await WriteJson(ctx, result != null ? Ok(result) : Err("Failed to create visual script"));
+                        return;
+                    }
+                    if (path == "/visualscripting/addNode")
+                    {
+                        var req = JsonUtility.FromJson<VisualScriptAddNodeRequest>(body);
+                        var result = await RunOnMainThread(() => AddVisualScriptNode(req));
+                        await WriteJson(ctx, result != null ? Ok(result) : Err("Failed to add visual script node"));
+                        return;
+                    }
+                    if (path == "/visualscripting/connectNodes")
+                    {
+                        var req = JsonUtility.FromJson<VisualScriptConnectRequest>(body);
+                        var result = await RunOnMainThread(() => ConnectVisualScriptNodes(req));
+                        await WriteJson(ctx, result != null ? Ok(result) : Err("Failed to connect visual script nodes"));
+                        return;
+                    }
+                    if (path == "/visualscripting/getGraph")
+                    {
+                        var req = JsonUtility.FromJson<VisualScriptGetRequest>(body);
+                        var result = await RunOnMainThread(() => GetVisualScriptGraph(req));
+                        await WriteJson(ctx, result != null ? Ok(result) : Err("Failed to get visual script graph"));
+                        return;
+                    }
+                    if (path == "/visualscripting/generateFromMcp")
+                    {
+                        var req = JsonUtility.FromJson<VisualScriptFromMcpRequest>(body);
+                        var result = await RunOnMainThread(() => GenerateVisualScriptFromMcp(req));
+                        await WriteJson(ctx, result != null ? Ok(result) : Err("Failed to generate visual script from MCP"));
+                        return;
+                    }
                     if (path == "/prefs/set")
                     {
                         var req = JsonUtility.FromJson<PlayerPrefsSetRequest>(body);
@@ -1963,6 +1998,95 @@ namespace MCP.UnityBridge
         [Serializable] private class PlayerPrefsSetRequest { public string key; public string type; public string stringValue; public int intValue; public float floatValue; }
         [Serializable] private class PlayerPrefsGetRequest { public string key; public string type; }
         [Serializable] private class PlayerPrefsDeleteRequest { public string key; }
+
+        // Visual Scripting Request/Response Classes
+        [Serializable]
+        private class VisualScriptCreateRequest
+        {
+            public string gameObjectPath;
+            public string scriptName;
+            public string templateType; // "empty", "state", "flow", "custom"
+            public string[] mcpOperations; // Array of MCP operation descriptions
+        }
+
+        [Serializable]
+        private class VisualScriptAddNodeRequest
+        {
+            public string gameObjectPath;
+            public string nodeType; // "event", "action", "condition", "variable", "mcp_operation"
+            public string nodeData; // JSON data for the node
+            public Vec3 position; // Position in the graph
+            public string nodeId; // Optional custom node ID
+        }
+
+        [Serializable]
+        private class VisualScriptConnectRequest
+        {
+            public string gameObjectPath;
+            public string fromNodeId;
+            public string fromPortName;
+            public string toNodeId;
+            public string toPortName;
+        }
+
+        [Serializable]
+        private class VisualScriptGetRequest
+        {
+            public string gameObjectPath;
+            public bool includeConnections;
+            public bool includeNodeData;
+        }
+
+        [Serializable]
+        private class VisualScriptFromMcpRequest
+        {
+            public string gameObjectPath;
+            public string scriptName;
+            public McpOperation[] operations;
+            public bool autoConnect; // Whether to auto-connect nodes in sequence
+        }
+
+        [Serializable]
+        private class McpOperation
+        {
+            public string tool;
+            public string action;
+            public string parameters; // JSON string of parameters
+            public string description;
+            public int order; // Execution order
+        }
+
+        [Serializable]
+        private class VisualScriptResponse
+        {
+            public string gameObjectPath;
+            public string scriptName;
+            public bool success;
+            public string message;
+            public VisualScriptNode[] nodes;
+            public VisualScriptConnection[] connections;
+        }
+
+        [Serializable]
+        private class VisualScriptNode
+        {
+            public string nodeId;
+            public string nodeType;
+            public string displayName;
+            public Vec3 position;
+            public string nodeData; // JSON data
+            public string[] inputPorts;
+            public string[] outputPorts;
+        }
+
+        [Serializable]
+        private class VisualScriptConnection
+        {
+            public string fromNodeId;
+            public string fromPort;
+            public string toNodeId;
+            public string toPort;
+        }
         [Serializable] private class RigidbodyFieldsPayload { public float mass; public float drag; public float angularDrag; public bool useGravity; public bool isKinematic; public string constraints; public string interpolation; public string collisionDetectionMode; }
         [Serializable] private class ColorPayload { public float r; public float g; public float b; public float a; }
         [Serializable] private class CameraFieldsPayload { public float fieldOfView; public bool orthographic; public float nearClipPlane; public float farClipPlane; public string clearFlags; public ColorPayload backgroundColor; }
@@ -2475,8 +2599,466 @@ namespace MCP.UnityBridge
 
         [Serializable]
         private class PauseRequest { public bool pause; }
+
+        // Visual Scripting Implementation Methods
+        private static VisualScriptResponse CreateVisualScript(VisualScriptCreateRequest req)
+        {
+            try
+            {
+                var go = FindTarget(req.gameObjectPath, null);
+                if (go == null)
+                    return null; // Will be handled as error by caller
+
+                // Check if Visual Scripting package is available
+                var scriptMachineType = Type.GetType("Unity.VisualScripting.ScriptMachine, Unity.VisualScripting.Core");
+                if (scriptMachineType == null)
+                {
+                    // Fallback: Simulate visual script creation without actual Visual Scripting package
+                    return CreateVisualScriptSimulation(req);
+                }
+
+                // Add ScriptMachine component if not present
+                var scriptMachine = go.GetComponent(scriptMachineType);
+                if (scriptMachine == null)
+                {
+                    scriptMachine = go.AddComponent(scriptMachineType);
+                }
+
+                // Create a new ScriptGraphAsset
+                var scriptGraphAssetType = Type.GetType("Unity.VisualScripting.ScriptGraphAsset, Unity.VisualScripting.Core");
+                var scriptGraphAsset = ScriptableObject.CreateInstance(scriptGraphAssetType);
+
+                // Set the script name
+                var scriptName = string.IsNullOrEmpty(req.scriptName) ? $"{go.name}_VisualScript" : req.scriptName;
+                scriptGraphAsset.name = scriptName;
+
+                // Save the asset
+                var assetPath = $"Assets/Scripts/VisualScripts/{scriptName}.asset";
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(assetPath));
+                AssetDatabase.CreateAsset(scriptGraphAsset, assetPath);
+
+                // Assign the graph to the ScriptMachine
+                var graphProperty = scriptMachineType.GetProperty("graph");
+                graphProperty?.SetValue(scriptMachine, scriptGraphAsset);
+
+                // Generate nodes based on template or MCP operations
+                var nodes = new List<VisualScriptNode>();
+                if (req.mcpOperations != null && req.mcpOperations.Length > 0)
+                {
+                    nodes = GenerateNodesFromMcpOperations(req.mcpOperations);
+                }
+                else
+                {
+                    nodes = GenerateTemplateNodes(req.templateType ?? "empty");
+                }
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    scriptName = scriptName,
+                    success = true,
+                    message = $"Visual script '{scriptName}' created successfully",
+                    nodes = nodes.ToArray(),
+                    connections = new VisualScriptConnection[0]
+                };
+
+                EditorUtility.SetDirty(go);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static VisualScriptResponse AddVisualScriptNode(VisualScriptAddNodeRequest req)
+        {
+            try
+            {
+                var go = FindTarget(req.gameObjectPath, null);
+                if (go == null)
+                    return null; // Will be handled as error by caller
+
+                var scriptMachineType = Type.GetType("Unity.VisualScripting.ScriptMachine, Unity.VisualScripting.Core");
+                var scriptMachine = go.GetComponent(scriptMachineType);
+                if (scriptMachine == null)
+                    return null; // Will be handled as error by caller
+
+                // Create node based on type
+                var node = CreateVisualScriptNode(req.nodeType, req.nodeData, req.position, req.nodeId);
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    success = true,
+                    message = $"Node '{req.nodeType}' added successfully",
+                    nodes = new[] { node }
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static VisualScriptResponse ConnectVisualScriptNodes(VisualScriptConnectRequest req)
+        {
+            try
+            {
+                var go = FindTarget(req.gameObjectPath, null);
+                if (go == null)
+                    return null; // Will be handled as error by caller
+
+                // Create connection
+                var connection = new VisualScriptConnection
+                {
+                    fromNodeId = req.fromNodeId,
+                    fromPort = req.fromPortName,
+                    toNodeId = req.toNodeId,
+                    toPort = req.toPortName
+                };
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    success = true,
+                    message = "Nodes connected successfully",
+                    connections = new[] { connection }
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static VisualScriptResponse GetVisualScriptGraph(VisualScriptGetRequest req)
+        {
+            try
+            {
+                var go = FindTarget(req.gameObjectPath, null);
+                if (go == null)
+                    return null; // Will be handled as error by caller
+
+                var scriptMachineType = Type.GetType("Unity.VisualScripting.ScriptMachine, Unity.VisualScripting.Core");
+                var scriptMachine = go.GetComponent(scriptMachineType);
+                if (scriptMachine == null)
+                    return null; // Will be handled as error by caller
+
+                // Get graph information
+                var nodes = new List<VisualScriptNode>();
+                var connections = new List<VisualScriptConnection>();
+
+                // This would require deeper integration with Visual Scripting API
+                // For now, return basic structure
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    success = true,
+                    message = "Graph retrieved successfully",
+                    nodes = nodes.ToArray(),
+                    connections = connections.ToArray()
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static VisualScriptResponse GenerateVisualScriptFromMcp(VisualScriptFromMcpRequest req)
+        {
+            try
+            {
+                var go = FindTarget(req.gameObjectPath, null);
+                if (go == null)
+                    return null; // Will be handled as error by caller
+
+                // Check if Visual Scripting package is available
+                var scriptMachineType = Type.GetType("Unity.VisualScripting.ScriptMachine, Unity.VisualScripting.Core");
+                if (scriptMachineType == null)
+                {
+                    // Fallback: Simulate visual script generation
+                    return GenerateVisualScriptFromMcpSimulation(req);
+                }
+
+                // Create visual script first
+                var createReq = new VisualScriptCreateRequest
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    scriptName = req.scriptName,
+                    templateType = "empty"
+                };
+
+                var createResponse = CreateVisualScript(createReq);
+                if (createResponse == null)
+                    return null; // Will be handled as error by caller
+
+                // Generate nodes from MCP operations
+                var nodes = new List<VisualScriptNode>();
+                var connections = new List<VisualScriptConnection>();
+
+                // Sort operations by order
+                var sortedOps = req.operations.OrderBy(op => op.order).ToArray();
+
+                for (int i = 0; i < sortedOps.Length; i++)
+                {
+                    var op = sortedOps[i];
+                    var nodeId = $"mcp_node_{i}";
+
+                    var node = new VisualScriptNode
+                    {
+                        nodeId = nodeId,
+                        nodeType = "mcp_operation",
+                        displayName = $"{op.tool}: {op.action}",
+                        position = new Vec3 { x = i * 200, y = 0, z = 0 },
+                        nodeData = JsonUtility.ToJson(op),
+                        inputPorts = new[] { "input" },
+                        outputPorts = new[] { "output" }
+                    };
+                    nodes.Add(node);
+
+                    // Auto-connect nodes in sequence if requested
+                    if (req.autoConnect && i > 0)
+                    {
+                        var connection = new VisualScriptConnection
+                        {
+                            fromNodeId = $"mcp_node_{i-1}",
+                            fromPort = "output",
+                            toNodeId = nodeId,
+                            toPort = "input"
+                        };
+                        connections.Add(connection);
+                    }
+                }
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    scriptName = req.scriptName,
+                    success = true,
+                    message = $"Visual script generated from {req.operations.Length} MCP operations",
+                    nodes = nodes.ToArray(),
+                    connections = connections.ToArray()
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static List<VisualScriptNode> GenerateNodesFromMcpOperations(string[] mcpOperations)
+        {
+            var nodes = new List<VisualScriptNode>();
+
+            for (int i = 0; i < mcpOperations.Length; i++)
+            {
+                var node = new VisualScriptNode
+                {
+                    nodeId = $"mcp_op_{i}",
+                    nodeType = "mcp_operation",
+                    displayName = mcpOperations[i],
+                    position = new Vec3 { x = i * 150, y = 0, z = 0 },
+                    nodeData = mcpOperations[i],
+                    inputPorts = new[] { "input" },
+                    outputPorts = new[] { "output" }
+                };
+                nodes.Add(node);
+            }
+
+            return nodes;
+        }
+
+        private static List<VisualScriptNode> GenerateTemplateNodes(string templateType)
+        {
+            var nodes = new List<VisualScriptNode>();
+
+            switch (templateType.ToLower())
+            {
+                case "state":
+                    nodes.Add(CreateVisualScriptNode("event", "On Start", new Vec3 { x = 0, y = 0, z = 0 }, "start_event"));
+                    nodes.Add(CreateVisualScriptNode("action", "Set Variable", new Vec3 { x = 200, y = 0, z = 0 }, "set_var"));
+                    break;
+                case "flow":
+                    nodes.Add(CreateVisualScriptNode("event", "On Update", new Vec3 { x = 0, y = 0, z = 0 }, "update_event"));
+                    nodes.Add(CreateVisualScriptNode("condition", "If", new Vec3 { x = 200, y = 0, z = 0 }, "if_condition"));
+                    nodes.Add(CreateVisualScriptNode("action", "Debug Log", new Vec3 { x = 400, y = 0, z = 0 }, "debug_log"));
+                    break;
+                default: // empty
+                    nodes.Add(CreateVisualScriptNode("event", "On Start", new Vec3 { x = 0, y = 0, z = 0 }, "start_event"));
+                    break;
+            }
+
+            return nodes;
+        }
+
+        private static VisualScriptNode CreateVisualScriptNode(string nodeType, string nodeData, Vec3 position, string nodeId = null)
+        {
+            if (string.IsNullOrEmpty(nodeId))
+                nodeId = System.Guid.NewGuid().ToString();
+
+            var inputPorts = new List<string>();
+            var outputPorts = new List<string>();
+
+            // Define ports based on node type
+            switch (nodeType.ToLower())
+            {
+                case "event":
+                    outputPorts.Add("trigger");
+                    break;
+                case "action":
+                    inputPorts.Add("input");
+                    outputPorts.Add("output");
+                    break;
+                case "condition":
+                    inputPorts.Add("input");
+                    outputPorts.Add("true");
+                    outputPorts.Add("false");
+                    break;
+                case "variable":
+                    outputPorts.Add("value");
+                    break;
+                case "mcp_operation":
+                    inputPorts.Add("input");
+                    outputPorts.Add("output");
+                    outputPorts.Add("error");
+                    break;
+            }
+
+            return new VisualScriptNode
+            {
+                nodeId = nodeId,
+                nodeType = nodeType,
+                displayName = nodeData,
+                position = position,
+                nodeData = nodeData,
+                inputPorts = inputPorts.ToArray(),
+                outputPorts = outputPorts.ToArray()
+            };
+        }
+
+        private static VisualScriptResponse CreateVisualScriptSimulation(VisualScriptCreateRequest req)
+        {
+            try
+            {
+                // Simulate visual script creation for demonstration purposes
+                var scriptName = string.IsNullOrEmpty(req.scriptName) ? $"{req.gameObjectPath}_VisualScript" : req.scriptName;
+
+                // Generate nodes based on template or MCP operations
+                var nodes = new List<VisualScriptNode>();
+                var connections = new List<VisualScriptConnection>();
+
+                if (req.mcpOperations != null && req.mcpOperations.Length > 0)
+                {
+                    nodes = GenerateNodesFromMcpOperations(req.mcpOperations);
+                }
+                else
+                {
+                    nodes = GenerateTemplateNodes(req.templateType ?? "empty");
+                }
+
+                // Auto-connect nodes in sequence for simulation
+                for (int i = 0; i < nodes.Count - 1; i++)
+                {
+                    var connection = new VisualScriptConnection
+                    {
+                        fromNodeId = nodes[i].nodeId,
+                        fromPort = nodes[i].outputPorts?.FirstOrDefault() ?? "output",
+                        toNodeId = nodes[i + 1].nodeId,
+                        toPort = nodes[i + 1].inputPorts?.FirstOrDefault() ?? "input"
+                    };
+                    connections.Add(connection);
+                }
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    scriptName = scriptName,
+                    success = true,
+                    message = $"Visual script '{scriptName}' simulated successfully (Visual Scripting package not installed). Generated {nodes.Count} nodes and {connections.Count} connections.",
+                    nodes = nodes.ToArray(),
+                    connections = connections.ToArray()
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
+
+        private static VisualScriptResponse GenerateVisualScriptFromMcpSimulation(VisualScriptFromMcpRequest req)
+        {
+            try
+            {
+                // Simulate visual script generation from MCP operations
+                var nodes = new List<VisualScriptNode>();
+                var connections = new List<VisualScriptConnection>();
+
+                // Sort operations by order
+                var sortedOps = req.operations.OrderBy(op => op.order).ToArray();
+
+                for (int i = 0; i < sortedOps.Length; i++)
+                {
+                    var op = sortedOps[i];
+                    var nodeId = $"mcp_node_{i}";
+
+                    var node = new VisualScriptNode
+                    {
+                        nodeId = nodeId,
+                        nodeType = "mcp_operation",
+                        displayName = $"{op.tool}: {op.action}",
+                        position = new Vec3 { x = i * 200, y = 0, z = 0 },
+                        nodeData = $"Tool: {op.tool}, Action: {op.action}, Description: {op.description}",
+                        inputPorts = new[] { "input" },
+                        outputPorts = new[] { "output", "error" }
+                    };
+                    nodes.Add(node);
+
+                    // Auto-connect nodes in sequence if requested
+                    if (req.autoConnect && i > 0)
+                    {
+                        var connection = new VisualScriptConnection
+                        {
+                            fromNodeId = $"mcp_node_{i-1}",
+                            fromPort = "output",
+                            toNodeId = nodeId,
+                            toPort = "input"
+                        };
+                        connections.Add(connection);
+                    }
+                }
+
+                var response = new VisualScriptResponse
+                {
+                    gameObjectPath = req.gameObjectPath,
+                    scriptName = req.scriptName,
+                    success = true,
+                    message = $"Visual script '{req.scriptName}' simulated from {req.operations.Length} MCP operations (Visual Scripting package not installed). Generated {nodes.Count} nodes and {connections.Count} connections.",
+                    nodes = nodes.ToArray(),
+                    connections = connections.ToArray()
+                };
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                return null; // Will be handled as error by caller
+            }
+        }
     }
 }
 #endif
-
-

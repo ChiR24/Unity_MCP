@@ -15,6 +15,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 import EventSource from "eventsource";
+import {
+  VISUAL_SCRIPT_TEMPLATES,
+  getTemplatesByCategory,
+  getTemplatesByTag,
+  getAllCategories,
+  getAllTags,
+  searchTemplates,
+  type VisualScriptTemplate
+} from "./visualScriptingTemplates.js";
 
 // Unity bridge base URL (Unity Editor plugin will host this locally)
 const UNITY_BASE_URL = process.env.UNITY_BRIDGE_URL || "http://127.0.0.1:58888";
@@ -27,6 +36,28 @@ type UnityResponse<T> = {
   result?: T;
   resultJson?: string;
   error?: string;
+};
+
+type VisualScriptResponse = {
+  gameObjectPath: string;
+  scriptName: string;
+  success: boolean;
+  message: string;
+  nodes?: Array<{
+    nodeId: string;
+    nodeType: string;
+    displayName: string;
+    position: Vector3;
+    nodeData: string;
+    inputPorts: string[];
+    outputPorts: string[];
+  }>;
+  connections?: Array<{
+    fromNodeId: string;
+    fromPort: string;
+    toNodeId: string;
+    toPort: string;
+  }>;
 };
 
 type Vector3 = {
@@ -47,6 +78,10 @@ type ToolResult = {
   isError?: boolean;
 };
 
+// Console verification configuration
+const CONSOLE_VERIFICATION_ENABLED = process.env.UNITY_CONSOLE_VERIFICATION !== "false";
+const CONSOLE_CHECK_DELAY_MS = Number(process.env.UNITY_CONSOLE_CHECK_DELAY_MS) || 500;
+
 // Common response helper functions
 function successResponse(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
@@ -58,6 +93,81 @@ function errorResponse(text: string): ToolResult {
 
 function jsonResponse(data: unknown): ToolResult {
   return successResponse(JSON.stringify(data ?? {}));
+}
+
+// Enhanced response with console verification
+async function successResponseWithConsoleCheck(text: string, skipConsoleCheck: boolean = false): Promise<ToolResult> {
+  if (!CONSOLE_VERIFICATION_ENABLED || skipConsoleCheck) {
+    return successResponse(text);
+  }
+
+  try {
+    // Small delay to allow Unity to process the operation
+    await new Promise(resolve => setTimeout(resolve, CONSOLE_CHECK_DELAY_MS));
+
+    // Check console for any errors or warnings
+    const consoleResult = await callUnity<{ text: string } | null>("/console/read", {});
+    const consoleText = consoleResult?.text || "";
+
+    // Look for recent errors or warnings in console
+    const lines = consoleText.split('\n').slice(-10); // Check last 10 lines
+    const hasErrors = lines.some(line => line.includes('Error:') || line.includes('error CS'));
+    const hasWarnings = lines.some(line => line.includes('Warning:') || line.includes('warning CS'));
+
+    let responseText = text;
+
+    if (hasErrors) {
+      const errorLines = lines.filter(line => line.includes('Error:') || line.includes('error CS'));
+      responseText += `\n\n⚠️ CONSOLE ERRORS DETECTED:\n${errorLines.join('\n')}`;
+    }
+
+    if (hasWarnings) {
+      const warningLines = lines.filter(line => line.includes('Warning:') || line.includes('warning CS'));
+      responseText += `\n\n⚠️ CONSOLE WARNINGS:\n${warningLines.join('\n')}`;
+    }
+
+    if (!hasErrors && !hasWarnings) {
+      responseText += "\n✅ Console Status: Clean";
+    }
+
+    return { content: [{ type: "text", text: responseText }], isError: hasErrors };
+
+  } catch (consoleError) {
+    // If console check fails, return original response with note
+    return { content: [{ type: "text", text: `${text}\n\n⚠️ Console check failed: ${(consoleError as Error).message}` }] };
+  }
+}
+
+// Enhanced error response with console verification
+async function errorResponseWithConsoleCheck(text: string): Promise<ToolResult> {
+  if (!CONSOLE_VERIFICATION_ENABLED) {
+    return errorResponse(text);
+  }
+
+  try {
+    // Check console for additional error context
+    const consoleResult = await callUnity<{ text: string } | null>("/console/read", {});
+    const consoleText = consoleResult?.text || "";
+
+    // Get recent console output for context
+    const lines = consoleText.split('\n').slice(-15); // Check last 15 lines for errors
+    const errorLines = lines.filter(line =>
+      line.includes('Error:') ||
+      line.includes('error CS') ||
+      line.includes('Exception:') ||
+      line.includes('Failed')
+    );
+
+    let responseText = text;
+    if (errorLines.length > 0) {
+      responseText += `\n\n🔍 CONSOLE ERROR CONTEXT:\n${errorLines.join('\n')}`;
+    }
+
+    return { content: [{ type: "text", text: responseText }], isError: true };
+
+  } catch (consoleError) {
+    return { content: [{ type: "text", text: `${text}\n\n⚠️ Console check failed: ${(consoleError as Error).message}` }], isError: true };
+  }
 }
 
 export async function callUnity<T>(path: string, payload?: unknown, timeoutMs?: number): Promise<T> {
@@ -207,11 +317,24 @@ export function getServer() {
         const act = String(action ?? "read").toLowerCase();
         if (act === "clear") {
           await callUnity("/console/clear", {});
-          return { content: [{ type: "text", text: "Cleared" }] };
+          return successResponse("Cleared ✅");
         }
         const result = await callUnity<{ text: string } | null>("/console/read", {});
         const text = result?.text && typeof result.text === "string" ? result.text : "";
-        return { content: [{ type: "text", text }] };
+
+        // Add status indicators to console output
+        const lines = text.split('\n');
+        const errorCount = lines.filter(line => line.includes('Error:') || line.includes('error CS')).length;
+        const warningCount = lines.filter(line => line.includes('Warning:') || line.includes('warning CS')).length;
+
+        let statusText = text;
+        if (errorCount > 0 || warningCount > 0) {
+          statusText += `\n\n📊 CONSOLE STATUS: ${errorCount} errors, ${warningCount} warnings`;
+        } else if (text.trim()) {
+          statusText += "\n\n✅ CONSOLE STATUS: No errors or warnings detected";
+        }
+
+        return { content: [{ type: "text", text: statusText }] };
       },
     },
     {
@@ -227,22 +350,37 @@ export function getServer() {
         const { action } = args as { action?: string };
         const act = String(action ?? "start").toLowerCase();
         if (act === "start") {
-          await callUnity("/play/start", {});
-          return { content: [{ type: "text", text: "Playing" }] };
+          try {
+            await callUnity("/play/start", {});
+
+            // Verify play mode actually started by checking editor state
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for Unity to process
+            const state = await callUnity<{ playMode: string; isCompiling: boolean } | null>("/editor/state", {});
+
+            if (state?.playMode === "Playing") {
+              return await successResponseWithConsoleCheck("🎮 Play Mode Started Successfully");
+            } else if (state?.isCompiling) {
+              return await errorResponseWithConsoleCheck("❌ Cannot start Play Mode: Unity is compiling. Fix compilation errors first.");
+            } else {
+              return await errorResponseWithConsoleCheck("❌ Play Mode failed to start. Check console for compilation errors.");
+            }
+          } catch (error) {
+            return await errorResponseWithConsoleCheck(`❌ Play Mode start failed: ${(error as Error).message}`);
+          }
         }
         if (act === "stop") {
           await callUnity("/play/stop", {});
-          return { content: [{ type: "text", text: "Stopped" }] };
+          return await successResponseWithConsoleCheck("⏹️ Play Mode Stopped");
         }
         if (act === "pause") {
           await callUnity("/play/pause", { pause: true });
-          return { content: [{ type: "text", text: "Paused" }] };
+          return await successResponseWithConsoleCheck("⏸️ Play Mode Paused");
         }
         if (act === "resume") {
           await callUnity("/play/pause", { pause: false });
-          return { content: [{ type: "text", text: "Resumed" }] };
+          return await successResponseWithConsoleCheck("▶️ Play Mode Resumed");
         }
-        return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
+        return await errorResponseWithConsoleCheck(`Unknown action: ${act}`);
       },
     },
     {
@@ -1171,7 +1309,7 @@ export function getServer() {
         
         if (act === "createscript") {
           const { scriptPath, className, content, scriptContent: scriptContentParam } = args as { scriptPath?: string; className?: string; content?: string; scriptContent?: string };
-          if (!scriptPath) return errorResponse("scriptPath required");
+          if (!scriptPath) return await errorResponseWithConsoleCheck("scriptPath required");
           
           // Use scriptContent parameter if provided, otherwise use content parameter
           const finalContent = scriptContentParam || content;
@@ -1203,33 +1341,463 @@ public class ${derivedClassName} : MonoBehaviour
             }
             
             await writeUnityFile(assetPath, scriptContent);
+
+            // Refresh asset database to ensure Unity recognizes the new script
+            await callUnity("/assets/refresh", {});
+
+            // Wait for compilation to complete
+            await waitForCompileIdle(30000); // 30 second timeout for script compilation
+
             const finalAssetPath = assetPath.startsWith("Assets/") ? assetPath : `Assets/${assetPath}`;
-            return successResponse(`Created script: ${finalAssetPath}`);
+            return await successResponseWithConsoleCheck(`📝 Created script: ${finalAssetPath}`);
           } catch (error) {
             const errorMsg = (error as Error).message || String(error);
-            return errorResponse(`Failed to create script: ${errorMsg}`);
+            return await errorResponseWithConsoleCheck(`Failed to create script: ${errorMsg}`);
           }
         }
         
         if (act === "attachscript") {
           const { path, className } = args as { path?: string; className?: string };
-          if (!path || !className) return errorResponse("path and className required");
-          
-          await callUnity("/component/addOrUpdate", {
-            path,
-            componentType: className
-          });
-          return successResponse(`Attached ${className} to ${path}`);
+          if (!path || !className) return await errorResponseWithConsoleCheck("path and className required");
+
+          try {
+            await callUnity("/component/addOrUpdate", {
+              path,
+              componentType: className
+            });
+            return await successResponseWithConsoleCheck(`🔗 Attached ${className} to ${path}`);
+          } catch (error) {
+            const errorMsg = (error as Error).message || String(error);
+            return await errorResponseWithConsoleCheck(`Failed to attach script: ${errorMsg}`);
+          }
         }
         
         if (act === "compile") {
-          // Force Unity to recompile scripts
-          await callUnity("/assets/refresh", {});
-          await waitForCompileIdle();
-          return successResponse("Compilation completed");
+          try {
+            // Force Unity to recompile scripts
+            await callUnity("/assets/refresh", {});
+            await waitForCompileIdle();
+            return await successResponseWithConsoleCheck("🔨 Compilation completed");
+          } catch (error) {
+            const errorMsg = (error as Error).message || String(error);
+            return await errorResponseWithConsoleCheck(`Compilation failed: ${errorMsg}`);
+          }
         }
-        
-        return errorResponse(`Unknown action: ${act}`);
+
+        return await errorResponseWithConsoleCheck(`Unknown action: ${act}`);
+      },
+    },
+    {
+      name: "unity_visualscripting",
+      description: "Visual Scripting tools: create visual scripts, add nodes, connect nodes, and generate from MCP operations",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "addNode", "connectNodes", "getGraph", "generateFromMcp"],
+            description: "Visual scripting operation to perform"
+          },
+          gameObjectPath: {
+            type: "string",
+            description: "Path to the GameObject (e.g., 'Player' or 'Environment/Terrain')"
+          },
+          scriptName: {
+            type: "string",
+            description: "Name for the visual script (optional, auto-generated if not provided)"
+          },
+          templateType: {
+            type: "string",
+            enum: ["empty", "state", "flow", "custom"],
+            description: "Template type for new visual scripts"
+          },
+          mcpOperations: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of MCP operation descriptions for script generation"
+          },
+          nodeType: {
+            type: "string",
+            enum: ["event", "action", "condition", "variable", "mcp_operation"],
+            description: "Type of node to add"
+          },
+          nodeData: {
+            type: "string",
+            description: "JSON data or description for the node"
+          },
+          position: {
+            type: "object",
+            properties: {
+              x: { type: "number" },
+              y: { type: "number" },
+              z: { type: "number" }
+            },
+            description: "Position of the node in the graph"
+          },
+          nodeId: {
+            type: "string",
+            description: "Custom node ID (optional, auto-generated if not provided)"
+          },
+          fromNodeId: {
+            type: "string",
+            description: "Source node ID for connections"
+          },
+          fromPortName: {
+            type: "string",
+            description: "Source port name for connections"
+          },
+          toNodeId: {
+            type: "string",
+            description: "Target node ID for connections"
+          },
+          toPortName: {
+            type: "string",
+            description: "Target port name for connections"
+          },
+          operations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                tool: { type: "string" },
+                action: { type: "string" },
+                parameters: { type: "string" },
+                description: { type: "string" },
+                order: { type: "number" }
+              }
+            },
+            description: "Array of MCP operations to convert to visual script nodes"
+          },
+          autoConnect: {
+            type: "boolean",
+            description: "Whether to automatically connect nodes in sequence"
+          },
+          includeConnections: {
+            type: "boolean",
+            description: "Whether to include connection information when getting graph"
+          },
+          includeNodeData: {
+            type: "boolean",
+            description: "Whether to include detailed node data when getting graph"
+          }
+        },
+        required: ["action", "gameObjectPath"]
+      },
+      handler: async (args: any): Promise<ToolResult> => {
+        const { action, gameObjectPath, scriptName, templateType, mcpOperations,
+                nodeType, nodeData, position, nodeId, fromNodeId, fromPortName,
+                toNodeId, toPortName, operations, autoConnect, includeConnections,
+                includeNodeData } = args;
+
+        try {
+          switch (action) {
+            case "create": {
+              const result = await callUnity<VisualScriptResponse>("/visualscripting/create", {
+                gameObjectPath,
+                scriptName,
+                templateType: templateType || "empty",
+                mcpOperations: mcpOperations || []
+              });
+
+              if (result) {
+                return successResponse(
+                  `Visual script '${result.scriptName}' created successfully on ${gameObjectPath}.\n` +
+                  `Generated ${result.nodes?.length || 0} nodes and ${result.connections?.length || 0} connections.\n` +
+                  `Message: ${result.message}`
+                );
+              } else {
+                return errorResponse(`Failed to create visual script`);
+              }
+            }
+
+            case "addNode": {
+              if (!nodeType) {
+                return errorResponse("nodeType is required for addNode action");
+              }
+
+              const result = await callUnity<VisualScriptResponse>("/visualscripting/addNode", {
+                gameObjectPath,
+                nodeType,
+                nodeData: nodeData || "",
+                position: position || { x: 0, y: 0, z: 0 },
+                nodeId
+              });
+
+              if (result) {
+                return successResponse(
+                  `Node '${nodeType}' added successfully to visual script on ${gameObjectPath}.\n` +
+                  `Node ID: ${result.nodes?.[0]?.nodeId}\n` +
+                  `Message: ${result.message}`
+                );
+              } else {
+                return errorResponse(`Failed to add node`);
+              }
+            }
+
+            case "connectNodes": {
+              if (!fromNodeId || !toNodeId || !fromPortName || !toPortName) {
+                return errorResponse("fromNodeId, toNodeId, fromPortName, and toPortName are required for connectNodes action");
+              }
+
+              const result = await callUnity<VisualScriptResponse>("/visualscripting/connectNodes", {
+                gameObjectPath,
+                fromNodeId,
+                fromPortName,
+                toNodeId,
+                toPortName
+              });
+
+              if (result) {
+                return successResponse(
+                  `Nodes connected successfully in visual script on ${gameObjectPath}.\n` +
+                  `Connection: ${fromNodeId}.${fromPortName} -> ${toNodeId}.${toPortName}\n` +
+                  `Message: ${result.message}`
+                );
+              } else {
+                return errorResponse(`Failed to connect nodes`);
+              }
+            }
+
+            case "getGraph": {
+              const result = await callUnity<VisualScriptResponse>("/visualscripting/getGraph", {
+                gameObjectPath,
+                includeConnections: includeConnections !== false,
+                includeNodeData: includeNodeData !== false
+              });
+
+              if (result) {
+                return successResponse(
+                  `Visual script graph retrieved from ${gameObjectPath}:\n` +
+                  `Nodes: ${result.nodes?.length || 0}\n` +
+                  `Connections: ${result.connections?.length || 0}\n` +
+                  `Graph data: ${JSON.stringify(result, null, 2)}`
+                );
+              } else {
+                return errorResponse(`Failed to get graph`);
+              }
+            }
+
+            case "generateFromMcp": {
+              if (!operations || !Array.isArray(operations)) {
+                return errorResponse("operations array is required for generateFromMcp action");
+              }
+
+              const result = await callUnity<VisualScriptResponse>("/visualscripting/generateFromMcp", {
+                gameObjectPath,
+                scriptName: scriptName || `${gameObjectPath.replace(/[^a-zA-Z0-9]/g, '_')}_MCPScript`,
+                operations,
+                autoConnect: autoConnect !== false
+              });
+
+              if (result) {
+                return successResponse(
+                  `Visual script '${result.scriptName}' generated from MCP operations on ${gameObjectPath}.\n` +
+                  `Generated ${result.nodes?.length || 0} nodes and ${result.connections?.length || 0} connections.\n` +
+                  `Operations processed: ${operations.length}\n` +
+                  `Message: ${result.message}`
+                );
+              } else {
+                return errorResponse(`Failed to generate visual script from MCP`);
+              }
+            }
+
+            default:
+              return errorResponse(`Unknown visual scripting action: ${action}`);
+          }
+        } catch (error) {
+          return errorResponse(`Visual scripting operation failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
+    },
+    {
+      name: "unity_visualscripting_templates",
+      description: "Visual Scripting template management: browse, search, and apply predefined workflow templates",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "search", "get", "apply", "categories", "tags"],
+            description: "Template operation to perform"
+          },
+          category: {
+            type: "string",
+            description: "Filter templates by category"
+          },
+          tag: {
+            type: "string",
+            description: "Filter templates by tag"
+          },
+          query: {
+            type: "string",
+            description: "Search query for templates"
+          },
+          templateName: {
+            type: "string",
+            description: "Name of the template to get or apply"
+          },
+          gameObjectPath: {
+            type: "string",
+            description: "Path to the GameObject for template application"
+          },
+          customizations: {
+            type: "object",
+            description: "Custom parameters to override template defaults"
+          }
+        },
+        required: ["action"]
+      },
+      handler: async (args: any): Promise<ToolResult> => {
+        const { action, category, tag, query, templateName, gameObjectPath, customizations } = args;
+
+        try {
+          switch (action) {
+            case "list": {
+              let templates = Object.values(VISUAL_SCRIPT_TEMPLATES);
+
+              if (category) {
+                templates = getTemplatesByCategory(category);
+              } else if (tag) {
+                templates = getTemplatesByTag(tag);
+              }
+
+              const templateList = templates.map(t => ({
+                name: t.name,
+                description: t.description,
+                category: t.category,
+                tags: t.tags,
+                operationCount: t.mcpOperations.length
+              }));
+
+              return successResponse(
+                `Found ${templateList.length} visual scripting templates:\n\n` +
+                templateList.map(t =>
+                  `• ${t.name} (${t.category})\n` +
+                  `  ${t.description}\n` +
+                  `  Operations: ${t.operationCount}, Tags: ${t.tags.join(', ')}\n`
+                ).join('\n')
+              );
+            }
+
+            case "search": {
+              if (!query) {
+                return errorResponse("query is required for search action");
+              }
+
+              const templates = searchTemplates(query);
+              const templateList = templates.map(t => ({
+                name: t.name,
+                description: t.description,
+                category: t.category,
+                tags: t.tags,
+                operationCount: t.mcpOperations.length
+              }));
+
+              return successResponse(
+                `Found ${templateList.length} templates matching "${query}":\n\n` +
+                templateList.map(t =>
+                  `• ${t.name} (${t.category})\n` +
+                  `  ${t.description}\n` +
+                  `  Operations: ${t.operationCount}, Tags: ${t.tags.join(', ')}\n`
+                ).join('\n')
+              );
+            }
+
+            case "get": {
+              if (!templateName) {
+                return errorResponse("templateName is required for get action");
+              }
+
+              const template = VISUAL_SCRIPT_TEMPLATES[templateName];
+              if (!template) {
+                return errorResponse(`Template '${templateName}' not found`);
+              }
+
+              return successResponse(
+                `Template: ${template.name}\n` +
+                `Description: ${template.description}\n` +
+                `Category: ${template.category}\n` +
+                `Tags: ${template.tags.join(', ')}\n` +
+                `Auto-connect: ${template.autoConnect}\n` +
+                `Operations (${template.mcpOperations.length}):\n\n` +
+                template.mcpOperations.map((op, i) =>
+                  `${i + 1}. ${op.description}\n` +
+                  `   Tool: ${op.tool}, Action: ${op.action}\n` +
+                  `   Parameters: ${JSON.stringify(op.parameters, null, 2)}\n`
+                ).join('\n')
+              );
+            }
+
+            case "apply": {
+              if (!templateName || !gameObjectPath) {
+                return errorResponse("templateName and gameObjectPath are required for apply action");
+              }
+
+              const template = VISUAL_SCRIPT_TEMPLATES[templateName];
+              if (!template) {
+                return errorResponse(`Template '${templateName}' not found`);
+              }
+
+              // Apply customizations if provided
+              let operations = template.mcpOperations;
+              if (customizations) {
+                operations = operations.map(op => ({
+                  ...op,
+                  parameters: { ...op.parameters, ...customizations }
+                }));
+              }
+
+              // Generate visual script from template
+              const response = await callUnity("/visualscripting/generateFromMcp", {
+                gameObjectPath,
+                scriptName: `${templateName}_${gameObjectPath.replace(/[^a-zA-Z0-9]/g, '_')}`,
+                operations,
+                autoConnect: template.autoConnect
+              }) as UnityResponse<VisualScriptResponse>;
+
+              if (response.ok && response.result) {
+                const result = response.result;
+                return successResponse(
+                  `Template '${templateName}' applied successfully to ${gameObjectPath}!\n` +
+                  `Visual script '${result.scriptName}' created with:\n` +
+                  `• ${result.nodes?.length || 0} nodes\n` +
+                  `• ${result.connections?.length || 0} connections\n` +
+                  `• ${operations.length} MCP operations\n\n` +
+                  `Message: ${result.message}`
+                );
+              } else {
+                return errorResponse(`Failed to apply template: ${response.error}`);
+              }
+            }
+
+            case "categories": {
+              const categories = getAllCategories();
+              return successResponse(
+                `Available template categories (${categories.length}):\n\n` +
+                categories.map(cat => {
+                  const count = getTemplatesByCategory(cat).length;
+                  return `• ${cat} (${count} templates)`;
+                }).join('\n')
+              );
+            }
+
+            case "tags": {
+              const tags = getAllTags();
+              return successResponse(
+                `Available template tags (${tags.length}):\n\n` +
+                tags.map(tag => {
+                  const count = getTemplatesByTag(tag).length;
+                  return `• ${tag} (${count} templates)`;
+                }).join('\n')
+              );
+            }
+
+            default:
+              return errorResponse(`Unknown template action: ${action}`);
+          }
+        } catch (error) {
+          return errorResponse(`Template operation failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       },
     },
   ];

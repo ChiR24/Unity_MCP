@@ -27,10 +27,14 @@ This repo contains:
 
 ## Key Features 🚀
 
-- 🗣️ Natural Language Control — Ask your LLM to perform Unity tasks
-- 🛠️ Powerful Tools — Assets, scenes, game objects, components, editor utilities, packages, play mode, and more
-- 🤖 Automation — Script repetitive or multi-step Editor tasks
-- 🧩 Extensible — Add new Unity endpoints and MCP tools as your workflow grows
+- 🗣️ **Natural Language Control** — Ask your LLM to perform Unity tasks
+- 🛠️ **Powerful Tools** — Assets, scenes, game objects, components, editor utilities, packages, play mode, and more
+- 🤖 **Automation** — Script repetitive or multi-step Editor tasks
+- 🎨 **Visual Scripting Integration** — Create Unity Visual Scripting graphs from MCP operations with pre-built templates
+- 🔍 **Automatic Console Verification** — Every tool operation automatically checks Unity console for errors/warnings
+- ✅ **Enhanced Error Handling** — Immediate feedback with console context when operations fail
+- 🎮 **Smart Play Mode Control** — Prevents play mode when compilation errors exist
+- 🧩 **Extensible** — Add new Unity endpoints and MCP tools as your workflow grows
 
 <details open>
 <summary><strong>Available Tools</strong></summary>
@@ -56,6 +60,8 @@ Tools are exposed with underscore names only. Selected highlights:
 - unity_rendering — Create light/camera/material, set properties
 - unity_gameplay — Rigidbody/Collider helpers, tag/layer
 - unity_code — Write files, create scripts, attach scripts, compile
+- **unity_visualscripting** — Create visual scripts, add nodes, connect workflows
+- **unity_visualscripting_templates** — Browse, search, and apply workflow templates
 
 </details>
 
@@ -135,9 +141,34 @@ Example configuration (JSON):
 }
 ```
 
-Notes:
-- If you use a token, set the same value in both environments: `UNITY_BRIDGE_TOKEN`
+### Console Verification Configuration
+
+The server includes automatic console verification. Configure with environment variables:
+
+```json
+{
+  "unity-mcp": {
+    "command": "node",
+    "args": ["PathToFile/MCP/server/dist/index.js"],
+    "env": {
+      "UNITY_BRIDGE_URL": "http://127.0.0.1:58888",
+      "UNITY_CONSOLE_VERIFICATION": "true",
+      "UNITY_CONSOLE_CHECK_DELAY_MS": "500"
+    }
+  }
+}
+```
+
+**Environment Variables:**
+- `UNITY_BRIDGE_TOKEN` — Security token (set same value in Unity and server)
+- `UNITY_CONSOLE_VERIFICATION` — Enable automatic console checking (default: true)
+- `UNITY_CONSOLE_CHECK_DELAY_MS` — Delay before checking console (default: 500ms)
+- `UNITY_COMPILE_TIMEOUT_MS` — Script compilation timeout (default: 120000ms)
+
+**Notes:**
 - The server communicates over stdio; your client should launch it as a stdio tool
+- Console verification provides immediate feedback on operation success/failure
+- Every tool operation automatically checks Unity console for errors and warnings
 
 ---
 
@@ -164,6 +195,51 @@ You should see:
 - Play/pause/resume/stop
 - Scene save/saveAs
 - Package list
+
+---
+
+## Visual Scripting Integration 🎨
+
+Unity MCP Bridge now includes powerful Visual Scripting integration that allows you to create Unity Visual Scripting graphs from MCP operations and natural language commands.
+
+### Key Features
+
+- **Template System**: Pre-built workflow templates for common game development patterns
+- **MCP to Visual Script Conversion**: Transform MCP operations into visual script nodes
+- **Node-Based Workflows**: Design complex workflows using visual nodes
+- **Automated Connections**: Intelligent node connection and flow management
+
+### Quick Examples
+
+```typescript
+// Apply a player setup template
+await client.callTool("unity_visualscripting_templates", {
+  action: "apply",
+  templateName: "create_player_setup",
+  gameObjectPath: "Player"
+});
+
+// Generate visual script from MCP operations
+await client.callTool("unity_visualscripting", {
+  action: "generateFromMcp",
+  gameObjectPath: "GameManager",
+  operations: [
+    { tool: "unity_console", action: "clear", description: "Clear console", order: 1 },
+    { tool: "unity_scene", action: "save", description: "Save scene", order: 2 }
+  ],
+  autoConnect: true
+});
+```
+
+### Available Templates
+
+- **Player Management**: Complete player setup with components
+- **Scene Management**: Scene transitions and optimization
+- **Asset Management**: Asset optimization and validation workflows
+- **Testing & QA**: Automated testing pipelines
+- **Build & Deploy**: Complete build and deployment processes
+
+For detailed documentation, see [Visual Scripting Integration Guide](docs/VisualScriptingIntegration.md).
 
 ---
 

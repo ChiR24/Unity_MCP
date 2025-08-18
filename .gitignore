@@ -10,6 +10,7 @@ Build/
 .vscode/
 .vs/
 .idea/
+.augment/
 
 # OS
 .DS_Store

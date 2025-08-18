@@ -222,6 +222,80 @@ async function main() {
     await call("unity_editor", { action: "invoke", typeName: process.env.INVOKE_TYPE, methodName: process.env.INVOKE_METHOD, isStatic: process.env.INVOKE_IS_STATIC === "1", argsJson: process.env.INVOKE_ARGS_JSON });
   }
 
+  // Visual Scripting Tests
+  console.log("\n🎨 Testing Visual Scripting functionality...");
+
+  // Test template management
+  await call("unity_visualscripting_templates", { action: "categories" });
+  await call("unity_visualscripting_templates", { action: "list", category: "Player Management" });
+  await call("unity_visualscripting_templates", { action: "get", templateName: "create_player_setup" });
+
+  // Create a test GameObject for visual scripting
+  const vsTestObjName = "VisualScriptTestObject";
+  await call("unity_gameObject", { action: "create", name: vsTestObjName, active: true });
+  await sleep(500);
+
+  // Test visual scripting operations
+  await call("unity_visualscripting", {
+    action: "create",
+    gameObjectPath: vsTestObjName,
+    scriptName: "TestVisualScript",
+    templateType: "flow"
+  });
+
+  // Add a custom node
+  await call("unity_visualscripting", {
+    action: "addNode",
+    gameObjectPath: vsTestObjName,
+    nodeType: "mcp_operation",
+    nodeData: "Custom MCP Node",
+    position: { x: 800, y: 0, z: 0 }
+  });
+
+  // Apply a template
+  await call("unity_visualscripting_templates", {
+    action: "apply",
+    templateName: "create_player_setup",
+    gameObjectPath: vsTestObjName,
+    customizations: { name: "CustomPlayer" }
+  });
+
+  // Get the generated graph
+  await call("unity_visualscripting", {
+    action: "getGraph",
+    gameObjectPath: vsTestObjName,
+    includeConnections: true,
+    includeNodeData: true
+  });
+
+  // Generate visual script from custom MCP operations
+  await call("unity_visualscripting", {
+    action: "generateFromMcp",
+    gameObjectPath: vsTestObjName,
+    scriptName: "CustomMCPScript",
+    operations: [
+      {
+        tool: "unity_console",
+        action: "clear",
+        parameters: {},
+        description: "Clear console",
+        order: 1
+      },
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "DynamicObject" },
+        description: "Create dynamic object",
+        order: 2
+      }
+    ],
+    autoConnect: true
+  });
+
+  // Clean up visual scripting test object
+  await call("unity_gameObject", { action: "delete", path: vsTestObjName });
+  console.log("✅ Visual Scripting tests completed!\n");
+
   // Delete the created object to validate delete path
   if (typeof objId === "number") {
     await call("unity_gameObject", { action: "delete", instanceId: objId, path: objPath });
