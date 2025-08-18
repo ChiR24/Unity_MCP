@@ -198,12 +198,12 @@ namespace MCP.UnityBridge
                         var created = await RunOnMainThread(() =>
                         {
                             var go = CreateGameObject(req, hasPos, hasLocalPos, hasEuler, hasLocalEuler, hasLocalScale);
-                            
+
                             // Mark scene dirty and refresh UI after creating GameObject
                             EditorUtility.SetDirty(go);
                             EditorSceneManager.MarkSceneDirty(go.scene);
                             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                            
+
                             return new CreatedResponse { instanceId = go.GetInstanceID(), path = GetPath(go.transform) };
                         });
                         await WriteJson(ctx, Ok(created));
@@ -230,11 +230,11 @@ namespace MCP.UnityBridge
                             if (BodyHas(body, "scale") && req.scale != null) t.localScale = new Vector3(req.scale.x, req.scale.y, req.scale.z);
                             if (BodyHas(body, "rotation") && req.rotation != null) t.eulerAngles = new Vector3(req.rotation.x, req.rotation.y, req.rotation.z);
                             if (BodyHas(body, "localRotation") && req.localRotation != null) t.localEulerAngles = new Vector3(req.localRotation.x, req.localRotation.y, req.localRotation.z);
-                            
+
                             // Mark scene dirty and refresh UI after updating GameObject properties
                             EditorUtility.SetDirty(go);
                             EditorSceneManager.MarkSceneDirty(go.scene);
-                            
+
                             // Refresh Inspector if this object is selected
                             if (Selection.activeGameObject == go)
                             {
@@ -242,7 +242,7 @@ namespace MCP.UnityBridge
                                 Selection.activeGameObject = go;
                             }
                             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                            
+
                             return GetPath(go.transform);
                         });
                         if (updatedPath == null) { await WriteJson(ctx, Err("GameObject not found")); return; }
@@ -287,10 +287,10 @@ namespace MCP.UnityBridge
                             // Store the path before deletion
                             var goPath = req.path ?? GetPath(go.transform);
                             var goScene = go.scene;
-                            
-                            try { 
+
+                            try {
                                 UnityEngine.Object.DestroyImmediate(go);
-                                
+
                                 // Mark scene dirty after deleting GameObject
                                 EditorSceneManager.MarkSceneDirty(goScene);
                                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
@@ -316,7 +316,7 @@ namespace MCP.UnityBridge
                                 if (go == null) return (ok: false, body: Err("GameObject not found"));
                                 var type = ResolveType(req.componentType);
                                 if (type == null) return (ok: false, body: Err($"Component type '{req.componentType}' not found"));
-                                
+
                                 // Try to get existing component or add new one
                                 Component comp = go.GetComponent(type);
                                 if (comp == null)
@@ -331,12 +331,12 @@ namespace MCP.UnityBridge
                                         return (ok: false, body: Err($"Failed to add component: {addEx.Message}"));
                                     }
                                 }
-                                
+
                                 if (comp == null)
                                 {
                                     return (ok: false, body: Err("Component could not be added"));
                                 }
-                                
+
                                 // Apply fields if provided
                                 if (!string.IsNullOrEmpty(req.fieldsJson))
                                 {
@@ -369,15 +369,15 @@ namespace MCP.UnityBridge
                                         // Continue anyway, component was added successfully
                                     }
                                 }
-                                
+
                                 // Mark the scene as dirty and refresh the Editor UI
                                 EditorUtility.SetDirty(go);
                                 EditorUtility.SetDirty(comp);
                                 EditorSceneManager.MarkSceneDirty(go.scene);
-                                
+
                                 // Force refresh the Inspector immediately
                                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                                
+
                                 // Force selection refresh to update Inspector
                                 var currentSelection = Selection.activeGameObject;
                                 Selection.activeGameObject = null;
@@ -385,12 +385,12 @@ namespace MCP.UnityBridge
                                 {
                                     Selection.activeGameObject = currentSelection;
                                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                                    
+
                                     // Force refresh hierarchy and inspector windows
                                     EditorApplication.DirtyHierarchyWindowSorting();
                                     EditorUtility.SetDirty(go);
                                 };
-                                
+
                                 return (ok: true, body: Ok(new ComponentResponse { componentType = req.componentType, path = GetPath(go.transform) }));
                             }
                             catch (Exception ex)
@@ -649,13 +649,13 @@ namespace MCP.UnityBridge
                             if (type == null) return false;
                             var comp = go.GetComponent(type);
                             if (comp == null) return false;
-                            try { 
+                            try {
                                 UnityEngine.Object.DestroyImmediate(comp);
-                                
+
                                 // Mark scene dirty and refresh UI after destroying component
                                 EditorUtility.SetDirty(go);
                                 EditorSceneManager.MarkSceneDirty(go.scene);
-                                
+
                                 // Refresh Inspector if this object is selected
                                 if (Selection.activeGameObject == go)
                                 {
@@ -663,8 +663,8 @@ namespace MCP.UnityBridge
                                     Selection.activeGameObject = go;
                                 }
                                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                                
-                                return true; 
+
+                                return true;
                             } catch { return false; }
                         });
                         await WriteJson(ctx, ok ? Ok(new EmptyResponse()) : Err("Component not found"));
@@ -1218,12 +1218,12 @@ namespace MCP.UnityBridge
                 var parent = GameObject.Find(parentPath);
                 if (parent != null) instance.transform.SetParent(parent.transform);
             }
-            
+
             // Mark scene dirty and refresh UI after instantiating asset
             EditorUtility.SetDirty(instance);
             EditorSceneManager.MarkSceneDirty(instance.scene);
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-            
+
             return instance;
 #else
             return null;
@@ -2054,7 +2054,223 @@ namespace MCP.UnityBridge
             public string parameters; // JSON string of parameters
             public string description;
             public int order; // Execution order
+            // Optional graph metadata forwarded from server templates
+            public string nodeType;
+            public Vec3 position;
+            public string groupName;
+            public string comment;
+            public string color;
+
+        // Helper: best-effort parse string to typed value based on hint
+        internal static object ParseVariableValue(string initialValue, string typeHint)
+        {
+            if (string.IsNullOrEmpty(typeHint)) return (object)initialValue;
+            try
+            {
+                switch (typeHint.ToLower())
+                {
+                    case "int": case "integer": if (int.TryParse(initialValue, out var i)) return i; break;
+                    case "float": case "single": if (float.TryParse(initialValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f)) return f; break;
+                    case "double": if (double.TryParse(initialValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d)) return d; break;
+                    case "bool": case "boolean": if (bool.TryParse(initialValue, out var b)) return b; break;
+                    case "string": return initialValue ?? string.Empty;
+                    case "vector3":
+                        // Expect JSON like {"x":0,"y":0,"z":0}
+                        try
+                        {
+                            var v = JsonUtility.FromJson<Vec3>(initialValue);
+                            return new UnityEngine.Vector3(v.x, v.y, v.z);
+                        }
+                        catch { }
+                        break;
+                }
+            }
+            catch { }
+            return (object)initialValue;
         }
+
+        // Helper: set or create an Object Variable on the GameObject via Visual Scripting Variables component
+        internal static void SetObjectVariable(UnityEngine.GameObject go, string name, object value)
+        {
+            try
+            {
+                var variablesType = Type.GetType("Unity.VisualScripting.Variables, Unity.VisualScripting.Core");
+                if (variablesType == null) return;
+                var variables = go.GetComponent(variablesType) ?? go.AddComponent(variablesType);
+                var declarationsProp = variablesType.GetProperty("declarations");
+                var declarations = declarationsProp?.GetValue(variables);
+                if (declarations == null) return;
+                var setMethod = declarations.GetType().GetMethod("Set", new Type[] { typeof(string), typeof(object) });
+                if (setMethod == null)
+                {
+                    // Try method without explicit signature
+                    setMethod = declarations.GetType().GetMethod("Set");
+                }
+                setMethod?.Invoke(declarations, new object[] { name, value });
+            }
+            catch { }
+        }
+
+        // Best-effort: try to add a sticky note (comment) to a ScriptGraphAsset using reflection.
+        // Silently no-op if types/members are not found.
+        internal static void TryAddStickyNoteToGraph(object scriptGraphAsset, string text, Vec3 pos, string color)
+        {
+            if (scriptGraphAsset == null || string.IsNullOrEmpty(text)) return;
+            try
+            {
+                // Try Unity.VisualScripting editor sticky note
+                var stickyType = Type.GetType("Unity.VisualScripting.StickyNote, Unity.VisualScripting.Editor")
+                    ?? Type.GetType("Unity.VisualScripting.StickyNote, Unity.VisualScripting.Core")
+                    ?? Type.GetType("UnityEditor.GraphToolsFoundation.Overdrive.StickyNoteModel, Unity.GraphToolsFoundation.Overdrive.Editor");
+                if (stickyType == null) return;
+
+                var sticky = Activator.CreateInstance(stickyType);
+
+                // Try common properties
+                var titleProp = stickyType.GetProperty("title") ?? stickyType.GetProperty("Title");
+                var contentsProp = stickyType.GetProperty("contents") ?? stickyType.GetProperty("Contents") ?? stickyType.GetProperty("content");
+                var positionProp = stickyType.GetProperty("position") ?? stickyType.GetProperty("Position") ?? stickyType.GetProperty("layout") ?? stickyType.GetProperty("Layout");
+                var colorProp = stickyType.GetProperty("color") ?? stickyType.GetProperty("Color") ?? stickyType.GetProperty("Theme");
+
+                titleProp?.SetValue(sticky, "Note");
+                contentsProp?.SetValue(sticky, text);
+
+                // Position could be Vec3, Vector2, Rect depending on API
+                try
+                {
+                    if (positionProp != null)
+                    {
+                        var propType = positionProp.PropertyType;
+                        if (propType.FullName.Contains("Rect"))
+                        {
+                            var rectType = propType;
+                            var rect = Activator.CreateInstance(rectType, new object[] { (float)pos.x, (float)pos.y, 200f, 80f });
+                            positionProp.SetValue(sticky, rect);
+                        }
+                        else if (propType.FullName.Contains("Vector2"))
+                        {
+                            var v2Type = propType;
+                            var v2 = Activator.CreateInstance(v2Type, new object[] { (float)pos.x, (float)pos.y });
+                            positionProp.SetValue(sticky, v2);
+                        }
+                        else
+                        {
+                            positionProp.SetValue(sticky, pos);
+                        }
+                    }
+                }
+                catch { }
+
+                try { colorProp?.SetValue(sticky, string.IsNullOrEmpty(color) ? "yellow" : color); } catch { }
+
+                // Try to attach to asset annotations/graph elements
+                var notesProp = scriptGraphAsset.GetType().GetProperty("stickyNotes")
+                    ?? scriptGraphAsset.GetType().GetProperty("annotations")
+                    ?? scriptGraphAsset.GetType().GetProperty("StickyNotes");
+                if (notesProp != null && notesProp.CanRead)
+                {
+                    var list = notesProp.GetValue(scriptGraphAsset) as System.Collections.IList;
+                    list?.Add(sticky);
+                }
+                else
+                {
+                    // Try Add or Insert method
+                    var addMethod = scriptGraphAsset.GetType().GetMethod("AddStickyNote")
+                        ?? scriptGraphAsset.GetType().GetMethod("AddAnnotation")
+                        ?? scriptGraphAsset.GetType().GetMethod("Add");
+                    addMethod?.Invoke(scriptGraphAsset, new object[] { sticky });
+                }
+            }
+            catch { /* swallow */ }
+        }
+
+        // Best-effort: try to add a group container to the ScriptGraphAsset using reflection.
+        internal static void TryAddGroupToGraph(object scriptGraphAsset, string groupName, Vec3 pos, string color)
+        {
+            if (scriptGraphAsset == null || string.IsNullOrEmpty(groupName)) return;
+            try
+            {
+                var groupType = Type.GetType("Unity.VisualScripting.Group, Unity.VisualScripting.Editor")
+                    ?? Type.GetType("Unity.VisualScripting.Group, Unity.VisualScripting.Core")
+                    ?? Type.GetType("UnityEditor.GraphToolsFoundation.Overdrive.GroupNodeModel, Unity.GraphToolsFoundation.Overdrive.Editor");
+                if (groupType == null) return;
+
+                var group = Activator.CreateInstance(groupType);
+                var titleProp = groupType.GetProperty("title") ?? groupType.GetProperty("Title") ?? groupType.GetProperty("name");
+                var positionProp = groupType.GetProperty("position") ?? groupType.GetProperty("Position") ?? groupType.GetProperty("layout");
+                var colorProp = groupType.GetProperty("color") ?? groupType.GetProperty("Color");
+
+                titleProp?.SetValue(group, groupName);
+
+                try
+                {
+                    if (positionProp != null)
+                    {
+                        var propType = positionProp.PropertyType;
+                        if (propType.FullName.Contains("Rect"))
+                        {
+                            var rect = Activator.CreateInstance(propType, new object[] { (float)pos.x, (float)pos.y, 300f, 200f });
+                            positionProp.SetValue(group, rect);
+                        }
+                        else if (propType.FullName.Contains("Vector2"))
+                        {
+                            var v2 = Activator.CreateInstance(propType, new object[] { (float)pos.x, (float)pos.y });
+                            positionProp.SetValue(group, v2);
+                        }
+                        else
+                        {
+                            positionProp.SetValue(group, pos);
+                        }
+                    }
+                }
+                catch { }
+
+                try { colorProp?.SetValue(group, string.IsNullOrEmpty(color) ? "cyan" : color); } catch { }
+
+                var groupsProp = scriptGraphAsset.GetType().GetProperty("groups")
+                    ?? scriptGraphAsset.GetType().GetProperty("Groups");
+                if (groupsProp != null && groupsProp.CanRead)
+                {
+                    var list = groupsProp.GetValue(scriptGraphAsset) as System.Collections.IList;
+                    list?.Add(group);
+                    return;
+                }
+                var addMethod = scriptGraphAsset.GetType().GetMethod("AddGroup")
+                    ?? scriptGraphAsset.GetType().GetMethod("Add");
+                addMethod?.Invoke(scriptGraphAsset, new object[] { group });
+            }
+            catch { /* swallow */ }
+        }
+
+
+            public VariableDecl variable;
+            public PortsHint ports;
+        }
+
+
+	        // Outer-class wrappers so GenerateVisualScriptFromMcp can call these without qualifying the nested type
+	        private static object ParseVariableValue(string initialValue, string typeHint)
+	        {
+	            return McpOperation.ParseVariableValue(initialValue, typeHint);
+	        }
+	        private static void SetObjectVariable(UnityEngine.GameObject go, string name, object value)
+	        {
+	            McpOperation.SetObjectVariable(go, name, value);
+	        }
+	        private static void TryAddStickyNoteToGraph(object scriptGraphAsset, string text, Vec3 pos, string color)
+	        {
+	            McpOperation.TryAddStickyNoteToGraph(scriptGraphAsset, text, pos, color);
+	        }
+	        private static void TryAddGroupToGraph(object scriptGraphAsset, string groupName, Vec3 pos, string color)
+	        {
+	            McpOperation.TryAddGroupToGraph(scriptGraphAsset, groupName, pos, color);
+	        }
+
+        [Serializable]
+        private class VariableDecl { public string name; public string type; public string initialValue; }
+
+        [Serializable]
+        private class PortsHint { public string from; public string to; }
 
         [Serializable]
         private class VisualScriptResponse
@@ -2201,12 +2417,12 @@ namespace MCP.UnityBridge
                 var go = FindTarget(path, instanceId);
                 if (go == null) return false;
                 PrefabUtility.ApplyPrefabInstance(go, InteractionMode.UserAction);
-                
+
                 // Mark scene dirty and refresh UI after applying prefab changes
                 EditorUtility.SetDirty(go);
                 EditorSceneManager.MarkSceneDirty(go.scene);
                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                
+
                 return true;
             }
             catch { return false; }
@@ -2219,11 +2435,11 @@ namespace MCP.UnityBridge
                 var go = FindTarget(path, instanceId);
                 if (go == null) return false;
                 PrefabUtility.RevertPrefabInstance(go, InteractionMode.UserAction);
-                
+
                 // Mark scene dirty and refresh UI after reverting prefab changes
                 EditorUtility.SetDirty(go);
                 EditorSceneManager.MarkSceneDirty(go.scene);
-                
+
                 // Refresh Inspector if this object is selected
                 if (Selection.activeGameObject == go)
                 {
@@ -2231,7 +2447,7 @@ namespace MCP.UnityBridge
                     Selection.activeGameObject = go;
                 }
                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                
+
                 return true;
             }
             catch { return false; }
@@ -2668,7 +2884,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -2700,7 +2916,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -2733,7 +2949,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -2769,7 +2985,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -2800,6 +3016,41 @@ namespace MCP.UnityBridge
                 };
 
                 var createResponse = CreateVisualScript(createReq);
+
+                // Try to attach comment and group artifacts at the graph level if APIs are present
+                try
+                {
+                    var goCompType = Type.GetType("Unity.VisualScripting.ScriptMachine, Unity.VisualScripting.Core");
+                    var scriptMachine = go.GetComponent(goCompType);
+                    var graphProp = goCompType.GetProperty("graph");
+                    var graphAsset = graphProp?.GetValue(scriptMachine);
+
+                    // First pass: apply variable declarations on GameObject
+                    foreach (var op in req.operations)
+                    {
+                        if (op.variable != null && !string.IsNullOrEmpty(op.variable.name))
+                        {
+                            var val = ParseVariableValue(op.variable.initialValue, op.variable.type);
+                            SetObjectVariable(go, op.variable.name, val);
+                        }
+                    }
+
+                    // Second pass: add sticky notes and groups if requested
+                    foreach (var op in req.operations)
+                    {
+                        if (!string.IsNullOrEmpty(op.comment))
+                        {
+                            var pos = op.position != null ? op.position : new Vec3 { x = 0, y = 0, z = 0 };
+                            TryAddStickyNoteToGraph(graphAsset, op.comment, pos, op.color);
+                        }
+                        if (!string.IsNullOrEmpty(op.groupName))
+                        {
+                            var pos = op.position != null ? op.position : new Vec3 { x = 0, y = 0, z = 0 };
+                            TryAddGroupToGraph(graphAsset, op.groupName, pos, op.color);
+                        }
+                    }
+                }
+                catch { }
                 if (createResponse == null)
                     return null; // Will be handled as error by caller
 
@@ -2815,12 +3066,15 @@ namespace MCP.UnityBridge
                     var op = sortedOps[i];
                     var nodeId = $"mcp_node_{i}";
 
+                    var pos = op.position != null ? op.position : new Vec3 { x = i * 200, y = 0, z = 0 };
+                    var nodeType = string.IsNullOrEmpty(op.nodeType) ? "mcp_operation" : op.nodeType;
+
                     var node = new VisualScriptNode
                     {
                         nodeId = nodeId,
-                        nodeType = "mcp_operation",
+                        nodeType = nodeType,
                         displayName = $"{op.tool}: {op.action}",
-                        position = new Vec3 { x = i * 200, y = 0, z = 0 },
+                        position = pos,
                         nodeData = JsonUtility.ToJson(op),
                         inputPorts = new[] { "input" },
                         outputPorts = new[] { "output" }
@@ -2830,12 +3084,14 @@ namespace MCP.UnityBridge
                     // Auto-connect nodes in sequence if requested
                     if (req.autoConnect && i > 0)
                     {
+                        string fromPort = (op.ports != null && !string.IsNullOrEmpty(op.ports.from)) ? op.ports.from : "output";
+                        string toPort = (op.ports != null && !string.IsNullOrEmpty(op.ports.to)) ? op.ports.to : "input";
                         var connection = new VisualScriptConnection
                         {
                             fromNodeId = $"mcp_node_{i-1}",
-                            fromPort = "output",
+                            fromPort = fromPort,
                             toNodeId = nodeId,
-                            toPort = "input"
+                            toPort = toPort
                         };
                         connections.Add(connection);
                     }
@@ -2853,7 +3109,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -2994,7 +3250,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }
@@ -3054,7 +3310,7 @@ namespace MCP.UnityBridge
 
                 return response;
             }
-            catch (Exception ex)
+            catch
             {
                 return null; // Will be handled as error by caller
             }

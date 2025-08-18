@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 type McpText = { type: "text"; text: string };
-type McpResult = { content?: McpText[]; isError?: boolean } & Record<string, any>;
+type McpResult = { content?: McpText[]; isError?: boolean } & Record<string, unknown>;
 
 async function main() {
   const useTsx = process.env.MCP_USE_TSX === "1";
@@ -36,7 +36,7 @@ async function main() {
     } catch { return ""; }
   };
   const getIsError = (res: McpResult | null): boolean => Boolean(res?.isError);
-  const parseFirstJson = <T = any>(res: McpResult | null): T | null => {
+  const parseFirstJson = <T = unknown>(res: McpResult | null): T | null => {
     try {
       const txt = getFirstText(res);
       if (!txt) return null;
@@ -44,12 +44,12 @@ async function main() {
     } catch { return null; }
   };
 
-  const call = async (name: string, args: Record<string, any> = {}): Promise<McpResult | null> => {
+  const call = async (name: string, args: Record<string, unknown> = {}): Promise<McpResult | null> => {
     try {
       const res = await client.callTool({ name, arguments: args }) as McpResult;
       console.log(`${name} ${JSON.stringify(args)} ->`, JSON.stringify(res));
       // After every tool call (except console read itself), read Unity console and print delta
-      if (!(name === "unity_console" && (args as any)?.action === "read")) {
+      if (!(name === "unity_console" && (args as Record<string, unknown>)?.action === "read")) {
         try {
           const logsRes = await client.callTool({ name: "unity_console", arguments: { action: "read" } }) as McpResult;
           const txt = getFirstText(logsRes) || "";

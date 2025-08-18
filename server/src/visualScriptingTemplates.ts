@@ -13,11 +13,16 @@ export interface VisualScriptTemplate {
 export interface McpTemplateOperation {
   tool: string;
   action: string;
-  parameters: Record<string, any>;
+  parameters: Record<string, unknown>;
   description: string;
   order: number;
-  nodeType?: string;
+  nodeType?: "event" | "action" | "condition" | "variable" | "group" | "comment";
   position?: { x: number; y: number; z: number };
+  groupName?: string;
+  comment?: string;
+  color?: string;
+  variable?: { name: string; type: string; initialValue?: unknown };
+  ports?: { from?: string; to?: string };
 }
 
 // Predefined Visual Scripting Templates
@@ -42,8 +47,8 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
       {
         tool: "unity_component",
         action: "add",
-        parameters: { 
-          gameObjectPath: "Player", 
+        parameters: {
+          gameObjectPath: "Player",
           componentType: "CharacterController",
           properties: { height: 2, radius: 0.5 }
         },
@@ -55,8 +60,8 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
       {
         tool: "unity_component",
         action: "add",
-        parameters: { 
-          gameObjectPath: "Player", 
+        parameters: {
+          gameObjectPath: "Player",
           componentType: "Rigidbody",
           properties: { mass: 1, useGravity: true }
         },
@@ -68,7 +73,7 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
       {
         tool: "unity_rendering",
         action: "createMaterial",
-        parameters: { 
+        parameters: {
           materialName: "PlayerMaterial",
           color: { r: 0.2, g: 0.6, b: 1.0, a: 1.0 }
         },
@@ -147,7 +152,7 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
       {
         tool: "unity_import",
         action: "setTextureSettings",
-        parameters: { 
+        parameters: {
           assetPath: "Assets/Textures/",
           maxSize: 1024,
           compression: "high"
@@ -248,8 +253,57 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
         parameters: { platform: "StandaloneWindows64" },
         description: "Build Application",
         order: 4,
+        nodeType: "action"
+      }
+    ]
+  },
+  "damage_on_trigger": {
+    name: "Damage On Trigger",
+    description: "Apply damage when the player enters a trigger volume",
+    category: "Gameplay",
+    autoConnect: true,
+    tags: ["trigger", "damage", "gameplay"],
+    mcpOperations: [
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "DamageZone" },
+        description: "Create trigger zone",
+        order: 1,
         nodeType: "action",
-        position: { x: 600, y: 0, z: 0 }
+        position: { x: 0, y: 0, z: 0 },
+        groupName: "Setup"
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: { gameObjectPath: "DamageZone", componentType: "BoxCollider", properties: { isTrigger: true } },
+        description: "Add BoxCollider (trigger)",
+        order: 2,
+        nodeType: "action",
+        position: { x: 200, y: 0, z: 0 },
+        groupName: "Setup"
+      },
+      {
+        tool: "unity_visualscripting",
+        action: "addNode",
+        parameters: { nodeType: "event", nodeData: "OnTriggerEnter" },
+        description: "Event: OnTriggerEnter",
+        order: 3,
+        nodeType: "event",
+        position: { x: 0, y: 150, z: 0 },
+        color: "#FFD54F"
+      },
+      {
+        tool: "unity_visualscripting",
+        action: "addNode",
+        parameters: { nodeType: "action", nodeData: "ApplyDamage", damage: 10 },
+        description: "Action: ApplyDamage(10)",
+        order: 4,
+        nodeType: "action",
+        position: { x: 220, y: 150, z: 0 },
+        color: "#EF5350",
+        ports: { from: "OnEnter", to: "Exec" }
       }
     ]
   }
@@ -257,13 +311,13 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
 
 // Helper functions for template management
 export function getTemplatesByCategory(category: string): VisualScriptTemplate[] {
-  return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template => 
+  return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template =>
     template.category === category
   );
 }
 
 export function getTemplatesByTag(tag: string): VisualScriptTemplate[] {
-  return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template => 
+  return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template =>
     template.tags.includes(tag)
   );
 }

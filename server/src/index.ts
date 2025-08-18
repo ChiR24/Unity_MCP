@@ -22,8 +22,24 @@ import {
   getAllCategories,
   getAllTags,
   searchTemplates,
-  type VisualScriptTemplate
+  // type VisualScriptTemplate
 } from "./visualScriptingTemplates.js";
+
+// Env helpers and small utilities
+function envBool(name: string, defaultValue: boolean): boolean {
+  const v = (process.env[name] ?? "").toString().trim().toLowerCase();
+  if (v === "" || v == null) return defaultValue;
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return defaultValue;
+}
+function envInt(name: string, defaultValue: number): number {
+  const raw = process.env[name];
+  const parsed = raw != null ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultValue;
+}
+// const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 
 // Unity bridge base URL (Unity Editor plugin will host this locally)
 const UNITY_BASE_URL = process.env.UNITY_BRIDGE_URL || "http://127.0.0.1:58888";
@@ -79,8 +95,8 @@ type ToolResult = {
 };
 
 // Console verification configuration
-const CONSOLE_VERIFICATION_ENABLED = process.env.UNITY_CONSOLE_VERIFICATION !== "false";
-const CONSOLE_CHECK_DELAY_MS = Number(process.env.UNITY_CONSOLE_CHECK_DELAY_MS) || 500;
+const CONSOLE_VERIFICATION_ENABLED = envBool("UNITY_CONSOLE_VERIFICATION", true);
+const CONSOLE_CHECK_DELAY_MS = envInt("UNITY_CONSOLE_CHECK_DELAY_MS", 500);
 
 // Common response helper functions
 function successResponse(text: string): ToolResult {
@@ -91,9 +107,9 @@ function errorResponse(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
 
-function jsonResponse(data: unknown): ToolResult {
-  return successResponse(JSON.stringify(data ?? {}));
-}
+// function jsonResponse(data: unknown): ToolResult {
+//   return successResponse(JSON.stringify(data ?? {}));
+// }
 
 // Enhanced response with console verification
 async function successResponseWithConsoleCheck(text: string, skipConsoleCheck: boolean = false): Promise<ToolResult> {
@@ -190,7 +206,7 @@ export async function callUnity<T>(path: string, payload?: unknown, timeoutMs?: 
         throw new Error(msg);
       }
       const body = response.data;
-      if (DEBUG) { try { console.log(`[unity-mcp] POST ${path} ok in ${Date.now() - start}ms`); } catch {} }
+      if (DEBUG) { console.log(`[unity-mcp] POST ${path} ok in ${Date.now() - start}ms`); }
       if (body.result !== undefined) return body.result;
       if (body.resultJson) {
         try {
@@ -204,7 +220,7 @@ export async function callUnity<T>(path: string, payload?: unknown, timeoutMs?: 
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       const transient = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|network error/i.test(msg);
-      if (DEBUG) { try { console.warn(`[unity-mcp] POST ${path} attempt ${attempt}/${maxAttempts} failed: ${msg}`); } catch {} }
+      if (DEBUG) { console.warn(`[unity-mcp] POST ${path} attempt ${attempt}/${maxAttempts} failed: ${msg}`); }
       if (!transient || attempt === maxAttempts) {
         throw err as Error;
       }
@@ -227,7 +243,7 @@ async function getUnityText(path: string, timeoutMs?: number): Promise<string> {
       throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       lastErr = err;
-      const msg = String((err as any)?.message || err);
+      const msg = err instanceof Error ? err.message : String(err);
       const transient = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|network error|HTTP 5\d\d/i.test(msg);
       if (!transient || attempt === maxAttempts) throw err as Error;
       await new Promise((r) => setTimeout(r, 200 * attempt));
@@ -424,10 +440,10 @@ export function getServer() {
       inputSchema: {
         type: "object",
         properties: {
-          action: { 
-            type: "string", 
-            description: "'list' assets, 'find' by query, 'refresh' database, or 'instantiate' asset into scene", 
-            enum: ["list", "find", "refresh", "instantiate"] 
+          action: {
+            type: "string",
+            description: "'list' assets, 'find' by query, 'refresh' database, or 'instantiate' asset into scene",
+            enum: ["list", "find", "refresh", "instantiate"]
           },
           // AssetDatabase operations
           path: { type: "string", description: "Folder path for list (e.g., 'Assets/Prefabs') or GameObject parent path for instantiate" },
@@ -443,19 +459,19 @@ export function getServer() {
       handler: async (args) => {
         const { action, assetPath } = args as { action?: string; assetPath?: string };
         const act = String(action ?? "list").toLowerCase();
-        
+
         // Original AssetDatabase operations
         if (act === "find" || act === "list" || act === "refresh") {
           return unityAssetsHandler(args);
         }
-        
+
         // Instantiate operation (from unity_asset)
         if (act === "instantiate") {
           if (!assetPath) return { content: [{ type: "text", text: "assetPath required for instantiate" }], isError: true };
           const res = await callUnity<{ path: string; instanceId: number }>("/asset/instantiate", args);
           return { content: [{ type: "text", text: `Instantiated ${res.path} (id ${res.instanceId})` }] };
         }
-        
+
         return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
       },
     },
@@ -517,14 +533,14 @@ export function getServer() {
         const { action } = args as { action?: string };
         const act = String(action ?? "create").toLowerCase();
         if (act === "create") {
-          const { primitiveType, name, position, localPosition, localScale, scale, localEulerAngles, ...rest } = args as Record<string, unknown>;
-          
+          const { primitiveType, name, position, localPosition, localScale, scale, localEulerAngles } = args as Record<string, unknown>;
+
           if (primitiveType && typeof primitiveType === 'string') {
             // Check if position is provided (either position or localPosition)
             if (!position && !localPosition) {
               return { content: [{ type: "text", text: `Position required when creating primitive ${primitiveType}. Please provide 'position' or 'localPosition' to avoid objects stacking at origin.` }], isError: true };
             }
-            
+
             // Use Unity menu system to create visible primitives
             const menuMap: Record<string, string> = {
               'Cube': 'GameObject/3D Object/Cube',
@@ -534,19 +550,19 @@ export function getServer() {
               'Quad': 'GameObject/3D Object/Quad',
               'Capsule': 'GameObject/3D Object/Capsule'
             };
-            
+
             const menuPath = menuMap[primitiveType];
             if (menuPath) {
               // Create primitive via menu
               await callUnity("/menu/execute", { menuPath });
-              
+
               // Get the newly created object
               const hierarchy = await callUnity<{ paths: string[] } | null>("/hierarchy/get", {});
               const newObjects = hierarchy?.paths?.filter(p => p.includes(primitiveType)) || [];
-              
+
               if (newObjects.length > 0) {
                 const newObjectPath = newObjects[newObjects.length - 1];
-                
+
                 // Apply name and transform properties
                 const setProps: Record<string, unknown> = { path: newObjectPath };
                 if (name) setProps.name = name;
@@ -557,27 +573,27 @@ export function getServer() {
                 if (scale) setProps.localScale = scale;
                 else if (localScale) setProps.localScale = localScale;
                 if (localEulerAngles) setProps.localEulerAngles = localEulerAngles;
-                
+
                 if (Object.keys(setProps).length > 1) {
                   await callUnity("/gameobject/setProperties", setProps);
                 }
-                
+
                 const finalName = name || newObjectPath;
                 return { content: [{ type: "text", text: `Created visible ${primitiveType} named ${finalName}` }] };
               }
             }
-            
+
             return { content: [{ type: "text", text: `Failed to create ${primitiveType}: unsupported primitive type` }], isError: true };
           }
-          
+
           // Fallback to regular creation for non-primitives
           const result = await callUnity<{ instanceId: number; path: string }>("/gameobject/create", args);
           return { content: [{ type: "text", text: `Created ${result.path} (id ${result.instanceId})` }] };
         }
         if (act === "get") {
           // Support alias: if caller passes only 'name' or 'targetName' for addressing, map to 'path'
-          const { path, instanceId, name, targetName, ...rest } = args as Record<string, unknown>;
-          const payload: Record<string, unknown> = { ...rest };
+          const { path, instanceId, name, targetName, ..._rest } = args as Record<string, unknown>;
+          const payload: Record<string, unknown> = { ..._rest };
           if (instanceId !== undefined) payload.instanceId = instanceId;
           if (path !== undefined) payload.path = path;
           else if (targetName !== undefined) payload.path = targetName;
@@ -586,30 +602,30 @@ export function getServer() {
           return { content: [{ type: "text", text: JSON.stringify(result ?? {}) }] };
         }
         if (act === "set") {
-          const { path, name, instanceId, components, ...rest } = args as Record<string, unknown>;
-          const payload: Record<string, unknown> = { ...rest };
+          const { path, name, instanceId, components, ..._rest } = args as Record<string, unknown>;
+          const payload: Record<string, unknown> = { ..._rest };
           if (instanceId !== undefined) payload.instanceId = instanceId;
           if (path !== undefined) payload.path = path;
           else if (name !== undefined) payload.path = name;
-          
+
           // Handle legacy components format for transforms
           if (components && Array.isArray(components)) {
             for (const comp of components) {
-              if (comp && typeof comp === 'object' && 
-                  'type' in comp && comp.type === 'UnityEngine.Transform' && 
+              if (comp && typeof comp === 'object' &&
+                  'type' in comp && comp.type === 'UnityEngine.Transform' &&
                   'fields' in comp && comp.fields && typeof comp.fields === 'object') {
                 // Extract transform fields from component format
                 Object.assign(payload, comp.fields);
               }
             }
           }
-          
+
           const result = await callUnity<{ path: string }>("/gameobject/setProperties", payload);
           return { content: [{ type: "text", text: `Updated ${result.path}` }] };
         }
         if (act === "delete") {
-          const { path, instanceId, name, ...rest } = args as Record<string, unknown>;
-          const payload: Record<string, unknown> = { ...rest };
+          const { path, instanceId, name, ..._rest } = args as Record<string, unknown>;
+          const payload: Record<string, unknown> = { ..._rest };
           if (instanceId !== undefined) payload.instanceId = instanceId;
           if (path !== undefined) payload.path = path;
           else if (name !== undefined) payload.path = name;
@@ -715,7 +731,7 @@ export function getServer() {
           return { content: [{ type: "text", text: shown ? "Shown" : "Not shown" }] };
         }
         if (act === "buildtarget") {
-          const result = await callUnity<{ } | null>("/editor/buildTarget", args);
+          await callUnity<null>("/editor/buildTarget", args);
           await waitForCompileIdle();
           return { content: [{ type: "text", text: "Build target switched" }] };
         }
@@ -783,8 +799,8 @@ export function getServer() {
       handler: async (args) => {
         const { action, path, additive, clean } = args as { action?: string; path?: string; additive?: boolean; clean?: boolean };
         const act = String(action ?? "open").toLowerCase();
-        
-        if (act === "open") { 
+
+        if (act === "open") {
           // By default, open replaces current scene unless additive is true
           if (!additive) {
             // Unload all existing scenes first to ensure clean loading
@@ -799,38 +815,38 @@ export function getServer() {
             }
             }
           }
-          await callUnity("/scene/open", { path, additive: additive ?? false }); 
-          return { content: [{ type: "text", text: `Opened scene${additive ? " (additive)" : ""}` }] }; 
+          await callUnity("/scene/open", { path, additive: additive ?? false });
+          return { content: [{ type: "text", text: `Opened scene${additive ? " (additive)" : ""}` }] };
         }
-        
-        if (act === "save") { 
-          await callUnity("/scene/save", args); 
-          return { content: [{ type: "text", text: "Saved" }] }; 
+
+        if (act === "save") {
+          await callUnity("/scene/save", args);
+          return { content: [{ type: "text", text: "Saved" }] };
         }
-        
-        if (act === "saveas") { 
-          await callUnity("/scene/saveAs", args); 
-          return { content: [{ type: "text", text: "Saved As" }] }; 
+
+        if (act === "saveas") {
+          await callUnity("/scene/saveAs", args);
+          return { content: [{ type: "text", text: "Saved As" }] };
         }
-        
-        if (act === "getloaded") { 
-          const res = await callUnity<Record<string, unknown> | null>("/scene/getLoaded", {}); 
-          return { content: [{ type: "text", text: JSON.stringify(res ?? {}) }] }; 
+
+        if (act === "getloaded") {
+          const res = await callUnity<Record<string, unknown> | null>("/scene/getLoaded", {});
+          return { content: [{ type: "text", text: JSON.stringify(res ?? {}) }] };
         }
-        
-        if (act === "create" || act === "createclean") { 
+
+        if (act === "create" || act === "createclean") {
           // Create new scene - if clean or createClean action, ensure it's empty
           const isClean = act === "createclean" || clean === true;
-          
+
           // First, create the new scene
           await callUnity("/scene/create", { path });
-          
+
           // If clean scene requested, remove all default objects
           if (isClean) {
             // Get all objects in the new scene
             const hierarchy = await callUnity<{ paths: string[] } | null>("/hierarchy/get", {});
             const objects = hierarchy?.paths || [];
-            
+
             // Delete all objects to create a truly empty scene
             for (const objPath of objects) {
               try {
@@ -839,18 +855,18 @@ export function getServer() {
                 // Ignore errors for objects that may have been deleted as children
               }
             }
-            
+
             return { content: [{ type: "text", text: "Created clean empty scene" }] };
           }
-          
-          return { content: [{ type: "text", text: "Created new scene" }] }; 
+
+          return { content: [{ type: "text", text: "Created new scene" }] };
         }
-        
+
         if (act === "clear") {
           // Clear all objects from current scene without creating a new one
           const hierarchy = await callUnity<{ paths: string[] } | null>("/hierarchy/get", {});
           const objects = hierarchy?.paths || [];
-          
+
           // Delete all root objects (children will be deleted automatically)
           const rootObjects = objects.filter(p => !p.includes('/'));
           for (const objPath of rootObjects) {
@@ -860,15 +876,15 @@ export function getServer() {
               // Ignore errors
             }
           }
-          
+
           return { content: [{ type: "text", text: "Cleared all objects from scene" }] };
         }
-        
-        if (act === "unload") { 
-          await callUnity("/scene/unload", args); 
-          return { content: [{ type: "text", text: "Unloaded" }] }; 
+
+        if (act === "unload") {
+          await callUnity("/scene/unload", args);
+          return { content: [{ type: "text", text: "Unloaded" }] };
         }
-        
+
         return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
       },
     },
@@ -996,8 +1012,8 @@ export function getServer() {
       inputSchema: {
         type: "object",
         properties: {
-          action: { 
-            type: "string", 
+          action: {
+            type: "string",
             description: "Rendering action to perform",
             enum: ["createLight", "createCamera", "createMaterial", "setLightProperty", "setCameraProperty"]
           },
@@ -1006,13 +1022,13 @@ export function getServer() {
           path: { type: "string", description: "GameObject path for property updates" },
           position: { type: "object", description: "Position {x, y, z}", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
           rotation: { type: "object", description: "Rotation {x, y, z}", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
-          
+
           // Light properties
           lightType: { type: "string", description: "Light type: 'Directional', 'Point', 'Spot', 'Area'", enum: ["Directional", "Point", "Spot", "Area"] },
           intensity: { type: "number", description: "Light intensity" },
           range: { type: "number", description: "Light range (Point/Spot)" },
           spotAngle: { type: "number", description: "Spot light angle" },
-          
+
           // Camera properties
           fieldOfView: { type: "number", description: "Camera field of view" },
           orthographic: { type: "boolean", description: "Orthographic camera mode" },
@@ -1020,7 +1036,7 @@ export function getServer() {
           nearClip: { type: "number", description: "Near clipping plane" },
           farClip: { type: "number", description: "Far clipping plane" },
           clearFlags: { type: "string", description: "Clear flags: 'Skybox', 'SolidColor', 'DepthOnly', 'Nothing'" },
-          
+
           // Material properties
           shader: { type: "string", description: "Shader name (e.g., 'Standard', 'Unlit/Color')" },
           assetPath: { type: "string", description: "Optional asset path for saving material (e.g., 'Assets/Materials/Test.mat')" },
@@ -1033,22 +1049,23 @@ export function getServer() {
       handler: async (args) => {
         const { action } = args as { action?: string };
         const act = String(action ?? "createLight").toLowerCase();
-        
+
         // Light operations
         if (act === "createlight") {
-          const { name, lightType, position, rotation, intensity, color } = args as any;
+          type LightCreateArgs = { name?: string; lightType?: string; position?: Vector3; rotation?: Vector3; intensity?: number; color?: Color };
+const { name, lightType, position, rotation, intensity, color } = args as LightCreateArgs;
           if (!name || !position) return { content: [{ type: "text", text: "Name and position required for light" }], isError: true };
-          
+
           await callUnity("/gameobject/create", { name, position, ...(rotation && { eulerAngles: rotation }) });
-          
-          const fields: Record<string, any> = {};
+
+          const fields: Record<string, unknown> = {};
           if (lightType) {
             const typeMap: Record<string, number> = { "Directional": 1, "Point": 2, "Spot": 0, "Area": 3 };
             fields.type = typeMap[lightType] ?? 1;
           }
           if (intensity !== undefined) fields.intensity = intensity;
           if (color) fields.color = color;
-          
+
           await callUnity("/component/addOrUpdate", {
             path: name,
             componentType: "Light",
@@ -1056,18 +1073,19 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Created ${lightType ?? 'Directional'} light: ${name}` }] };
         }
-        
+
         // Camera operations
         if (act === "createcamera") {
-          const { name, position, rotation, fieldOfView, orthographic } = args as any;
+          type CameraCreateArgs = { name?: string; position?: Vector3; rotation?: Vector3; fieldOfView?: number; orthographic?: boolean };
+const { name, position, rotation, fieldOfView, orthographic } = args as CameraCreateArgs;
           if (!name || !position) return { content: [{ type: "text", text: "Name and position required for camera" }], isError: true };
-          
+
           await callUnity("/gameobject/create", { name, position, ...(rotation && { eulerAngles: rotation }) });
-          
-          const fields: Record<string, any> = {};
+
+          const fields: Record<string, unknown> = {};
           if (fieldOfView !== undefined) fields.fieldOfView = fieldOfView;
           if (orthographic !== undefined) fields.orthographic = orthographic;
-          
+
           await callUnity("/component/addOrUpdate", {
             path: name,
             componentType: "Camera",
@@ -1075,7 +1093,7 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Created camera: ${name}` }] };
         }
-        
+
         // Material operations (create only; property updates not exposed by bridge yet)
         if (act === "creatematerial") {
           const { name, shader, color, assetPath } = args as { name?: string; shader?: string; color?: Color; assetPath?: string };
@@ -1089,17 +1107,18 @@ export function getServer() {
           const msg = res?.path ? `Created material ${name} at ${res.path}` : (res?.message ?? `Created material ${name}`);
           return { content: [{ type: "text", text: msg }] };
         }
-        
+
         // Property setters
         if (act === "setlightproperty") {
-          const { path, name, intensity, color } = args as any;
+          type LightSetArgs = { path?: string; name?: string; intensity?: number; color?: Color };
+const { path, name, intensity, color } = args as LightSetArgs;
           const targetPath = path || name;
           if (!targetPath) return { content: [{ type: "text", text: "Path or name required" }], isError: true };
-          
-          const fields: Record<string, any> = {};
+
+          const fields: Record<string, unknown> = {};
           if (intensity !== undefined) fields.intensity = intensity;
           if (color) fields.color = color;
-          
+
           await callUnity("/component/addOrUpdate", {
             path: targetPath,
             componentType: "Light",
@@ -1107,16 +1126,17 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Updated light properties on ${targetPath}` }] };
         }
-        
+
         if (act === "setcameraproperty") {
-          const { path, name, fieldOfView, orthographic } = args as any;
+          type CameraSetArgs = { path?: string; name?: string; fieldOfView?: number; orthographic?: boolean };
+const { path, name, fieldOfView, orthographic } = args as CameraSetArgs;
           const targetPath = path || name;
           if (!targetPath) return { content: [{ type: "text", text: "Path or name required" }], isError: true };
-          
-          const fields: Record<string, any> = {};
+
+          const fields: Record<string, unknown> = {};
           if (fieldOfView !== undefined) fields.fieldOfView = fieldOfView;
           if (orthographic !== undefined) fields.orthographic = orthographic;
-          
+
           await callUnity("/component/addOrUpdate", {
             path: targetPath,
             componentType: "Camera",
@@ -1124,7 +1144,7 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Updated camera properties on ${targetPath}` }] };
         }
-        
+
         return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
       },
     },
@@ -1134,20 +1154,20 @@ export function getServer() {
       inputSchema: {
         type: "object",
         properties: {
-          action: { 
-            type: "string", 
+          action: {
+            type: "string",
             description: "Gameplay action to perform",
             enum: ["addRigidbody", "addCollider", "setGravity", "setMass", "setTag", "setLayer"]
           },
           path: { type: "string", description: "GameObject path or name" },
-          
+
           // Physics properties
           colliderType: { type: "string", description: "Collider type: 'Box', 'Sphere', 'Capsule', 'Mesh'", enum: ["Box", "Sphere", "Capsule", "Mesh"] },
           useGravity: { type: "boolean", description: "Enable/disable gravity on Rigidbody" },
           mass: { type: "number", description: "Mass value for Rigidbody" },
           isKinematic: { type: "boolean", description: "Set Rigidbody as kinematic" },
           isTrigger: { type: "boolean", description: "Set collider as trigger" },
-          
+
           // Tag/Layer properties
           tag: { type: "string", description: "Tag name (e.g., 'Player', 'Enemy', 'Checkpoint')" },
           layer: { type: "number", description: "Layer index (0-31)" },
@@ -1156,17 +1176,17 @@ export function getServer() {
       handler: async (args) => {
         const { action, path } = args as { action?: string; path?: string };
         const act = String(action ?? "addRigidbody").toLowerCase();
-        
+
         if (!path) return { content: [{ type: "text", text: "GameObject path required" }], isError: true };
-        
+
         // Physics actions
         if (act === "addrigidbody") {
           const { useGravity, mass, isKinematic } = args as { useGravity?: boolean; mass?: number; isKinematic?: boolean };
-          const fields: Record<string, any> = {};
+          const fields: Record<string, unknown> = {};
           if (useGravity !== undefined) fields.useGravity = useGravity;
           if (mass !== undefined) fields.mass = mass;
           if (isKinematic !== undefined) fields.isKinematic = isKinematic;
-          
+
           await callUnity("/component/addOrUpdate", {
             path,
             componentType: "Rigidbody",
@@ -1174,15 +1194,15 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Added Rigidbody to ${path}` }] };
         }
-        
+
         if (act === "addcollider") {
           const { colliderType, isTrigger } = args as { colliderType?: string; isTrigger?: boolean };
           const type = colliderType ?? "Box";
           const componentType = `${type}Collider`;
-          
-          const fields: Record<string, any> = {};
+
+          const fields: Record<string, unknown> = {};
           if (isTrigger !== undefined) fields.isTrigger = isTrigger;
-          
+
           await callUnity("/component/addOrUpdate", {
             path,
             componentType,
@@ -1190,7 +1210,7 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Added ${componentType} to ${path}` }] };
         }
-        
+
         if (act === "setgravity") {
           const { useGravity } = args as { useGravity?: boolean };
           await callUnity("/component/addOrUpdate", {
@@ -1200,7 +1220,7 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Set gravity to ${useGravity} on ${path}` }] };
         }
-        
+
         if (act === "setmass") {
           const { mass } = args as { mass?: number };
           if (mass === undefined) return { content: [{ type: "text", text: "Mass value required" }], isError: true };
@@ -1211,7 +1231,7 @@ export function getServer() {
           });
           return { content: [{ type: "text", text: `Set mass to ${mass} on ${path}` }] };
         }
-        
+
         // Tag/Layer actions
         if (act === "settag") {
           const { tag } = args as { tag?: string };
@@ -1219,14 +1239,14 @@ export function getServer() {
           await callUnity("/gameobject/setProperties", { path, tag });
           return { content: [{ type: "text", text: `Set tag '${tag}' on ${path}` }] };
         }
-        
+
         if (act === "setlayer") {
           const { layer } = args as { layer?: number };
           if (layer === undefined) return { content: [{ type: "text", text: "Layer required" }], isError: true };
           await callUnity("/gameobject/setProperties", { path, layer });
           return { content: [{ type: "text", text: `Set layer ${layer} on ${path}` }] };
         }
-        
+
         return { content: [{ type: "text", text: `Unknown action: ${act}` }], isError: true };
       },
     },
@@ -1236,8 +1256,8 @@ export function getServer() {
       inputSchema: {
         type: "object",
         properties: {
-          action: { 
-            type: "string", 
+          action: {
+            type: "string",
             description: "Code operation to perform",
             enum: ["writeFile", "createScript", "attachScript", "compile"]
           },
@@ -1251,23 +1271,23 @@ export function getServer() {
       handler: async (args) => {
         const { action } = args as { action?: string };
         const act = String(action ?? "writeFile").toLowerCase();
-        
+
         // Helper function to write a file to Unity project
         async function writeUnityFile(filePath: string, fileContent: string): Promise<void> {
           // Ensure the path starts with Assets/
           const assetPath = filePath.startsWith("Assets/") ? filePath : `Assets/${filePath}`;
-          
+
           // Get Unity project info to construct absolute path
           const infoResult = await callUnity<{ projectName: string; unityVersion: string; dataPath: string } | null>("/editor/info", {});
           if (!infoResult || !infoResult.dataPath) {
             throw new Error("Could not get Unity project path");
           }
-          
+
           // Build absolute path
           const projectPath = infoResult.dataPath.replace(/[\\]/g, '/').replace(/\/Assets$/, '');
           const absolutePath = `${projectPath}/${assetPath}`.replace(/\/+/g, '/');
           const absoluteDir = absolutePath.substring(0, absolutePath.lastIndexOf('/'));
-          
+
           // Create directory using System.IO.Directory with explicit assembly
           await callUnity("/editor/invoke", {
             typeName: "System.IO.Directory",
@@ -1277,7 +1297,7 @@ export function getServer() {
           }).catch(() => {
             // Directory might exist, continue
           });
-          
+
           // Write file using System.IO.File (no explicit assembly) and UTF8 encoding
           await callUnity("/editor/invoke", {
             typeName: "System.IO.File",
@@ -1285,18 +1305,18 @@ export function getServer() {
             isStatic: true,
             argsJson: JSON.stringify([absolutePath, fileContent])
           });
-          
+
           // Refresh assets if it's a script
           if (assetPath.endsWith('.cs')) {
             await callUnity("/assets/refresh", {});
             await waitForCompileIdle();
           }
         }
-        
+
         if (act === "writefile") {
           const { path, content } = args as { path?: string; content?: string };
           if (!path || !content) return errorResponse("Path and content required");
-          
+
           try {
             await writeUnityFile(path, content);
             const assetPath = path.startsWith("Assets/") ? path : `Assets/${path}`;
@@ -1306,17 +1326,17 @@ export function getServer() {
             return errorResponse(`Failed to write file: ${errorMsg}`);
           }
         }
-        
+
         if (act === "createscript") {
           const { scriptPath, className, content, scriptContent: scriptContentParam } = args as { scriptPath?: string; className?: string; content?: string; scriptContent?: string };
           if (!scriptPath) return await errorResponseWithConsoleCheck("scriptPath required");
-          
+
           // Use scriptContent parameter if provided, otherwise use content parameter
           const finalContent = scriptContentParam || content;
-          
+
           // Extract class name from script path if not provided
           const derivedClassName = className || scriptPath.replace(/^.*\//, '').replace(/\.cs$/, '');
-          
+
           // Generate default content if not provided
           const scriptContent = finalContent || `using UnityEngine;
 
@@ -1326,20 +1346,20 @@ public class ${derivedClassName} : MonoBehaviour
     {
         Debug.Log("${derivedClassName} started!");
     }
-    
+
     void Update()
     {
-        
+
     }
 }`;
-          
+
           try {
             // Ensure the path ends with .cs
             let assetPath = scriptPath;
             if (!assetPath.endsWith('.cs')) {
               assetPath += '.cs';
             }
-            
+
             await writeUnityFile(assetPath, scriptContent);
 
             // Refresh asset database to ensure Unity recognizes the new script
@@ -1355,7 +1375,7 @@ public class ${derivedClassName} : MonoBehaviour
             return await errorResponseWithConsoleCheck(`Failed to create script: ${errorMsg}`);
           }
         }
-        
+
         if (act === "attachscript") {
           const { path, className } = args as { path?: string; className?: string };
           if (!path || !className) return await errorResponseWithConsoleCheck("path and className required");
@@ -1371,7 +1391,7 @@ public class ${derivedClassName} : MonoBehaviour
             return await errorResponseWithConsoleCheck(`Failed to attach script: ${errorMsg}`);
           }
         }
-        
+
         if (act === "compile") {
           try {
             // Force Unity to recompile scripts
@@ -1461,9 +1481,32 @@ public class ${derivedClassName} : MonoBehaviour
               properties: {
                 tool: { type: "string" },
                 action: { type: "string" },
+                // parameters can be a JSON string; server will stringify objects before sending to the bridge
                 parameters: { type: "string" },
                 description: { type: "string" },
-                order: { type: "number" }
+                order: { type: "number" },
+                nodeType: { type: "string" },
+                position: {
+                  type: "object",
+                  properties: {
+                    x: { type: "number" }, y: { type: "number" }, z: { type: "number" }
+                  }
+                },
+                groupName: { type: "string" },
+                comment: { type: "string" },
+                color: { type: "string" },
+                variable: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    type: { type: "string" },
+                    initialValue: {}
+                  }
+                },
+                ports: {
+                  type: "object",
+                  properties: { from: { type: "string" }, to: { type: "string" } }
+                }
               }
             },
             description: "Array of MCP operations to convert to visual script nodes"
@@ -1483,7 +1526,7 @@ public class ${derivedClassName} : MonoBehaviour
         },
         required: ["action", "gameObjectPath"]
       },
-      handler: async (args: any): Promise<ToolResult> => {
+      handler: async (args: Record<string, unknown>): Promise<ToolResult> => {
         const { action, gameObjectPath, scriptName, templateType, mcpOperations,
                 nodeType, nodeData, position, nodeId, fromNodeId, fromPortName,
                 toNodeId, toPortName, operations, autoConnect, includeConnections,
@@ -1582,10 +1625,16 @@ public class ${derivedClassName} : MonoBehaviour
                 return errorResponse("operations array is required for generateFromMcp action");
               }
 
+              // Ensure parameters are JSON strings; pass through extra metadata fields
+              const ops = operations.map((op: Record<string, unknown>) => ({
+                ...op,
+                parameters: typeof op.parameters === "string" ? op.parameters : JSON.stringify(op.parameters ?? {})
+              }));
+
               const result = await callUnity<VisualScriptResponse>("/visualscripting/generateFromMcp", {
                 gameObjectPath,
-                scriptName: scriptName || `${gameObjectPath.replace(/[^a-zA-Z0-9]/g, '_')}_MCPScript`,
-                operations,
+                scriptName: scriptName || `${String(gameObjectPath).replace(/[^a-zA-Z0-9]/g, '_')}_MCPScript`,
+                operations: ops,
                 autoConnect: autoConnect !== false
               });
 
@@ -1647,8 +1696,8 @@ public class ${derivedClassName} : MonoBehaviour
         },
         required: ["action"]
       },
-      handler: async (args: any): Promise<ToolResult> => {
-        const { action, category, tag, query, templateName, gameObjectPath, customizations } = args;
+      handler: async (args: Record<string, unknown>): Promise<ToolResult> => {
+        const { action, category, tag, query, templateName, gameObjectPath, customizations } = args as { action?: string; category?: string; tag?: string; query?: string; templateName?: string; gameObjectPath?: string; customizations?: Record<string, unknown> };
 
         try {
           switch (action) {
@@ -1656,9 +1705,9 @@ public class ${derivedClassName} : MonoBehaviour
               let templates = Object.values(VISUAL_SCRIPT_TEMPLATES);
 
               if (category) {
-                templates = getTemplatesByCategory(category);
+                templates = getTemplatesByCategory(String(category));
               } else if (tag) {
-                templates = getTemplatesByTag(tag);
+                templates = getTemplatesByTag(String(tag));
               }
 
               const templateList = templates.map(t => ({
@@ -1684,7 +1733,7 @@ public class ${derivedClassName} : MonoBehaviour
                 return errorResponse("query is required for search action");
               }
 
-              const templates = searchTemplates(query);
+              const templates = searchTemplates(String(query));
               const templateList = templates.map(t => ({
                 name: t.name,
                 description: t.description,
@@ -1708,7 +1757,7 @@ public class ${derivedClassName} : MonoBehaviour
                 return errorResponse("templateName is required for get action");
               }
 
-              const template = VISUAL_SCRIPT_TEMPLATES[templateName];
+              const template = VISUAL_SCRIPT_TEMPLATES[String(templateName)];
               if (!template) {
                 return errorResponse(`Template '${templateName}' not found`);
               }
@@ -1729,7 +1778,7 @@ public class ${derivedClassName} : MonoBehaviour
             }
 
             case "apply": {
-              if (!templateName || !gameObjectPath) {
+              if (!templateName || !gameObjectPath || typeof gameObjectPath !== 'string') {
                 return errorResponse("templateName and gameObjectPath are required for apply action");
               }
 
@@ -1748,10 +1797,14 @@ public class ${derivedClassName} : MonoBehaviour
               }
 
               // Generate visual script from template
+              const ops = operations.map((op) => ({
+                ...op,
+                parameters: typeof op.parameters === "string" ? op.parameters : JSON.stringify(op.parameters ?? {})
+              }));
               const response = await callUnity("/visualscripting/generateFromMcp", {
                 gameObjectPath,
                 scriptName: `${templateName}_${gameObjectPath.replace(/[^a-zA-Z0-9]/g, '_')}`,
-                operations,
+                operations: ops,
                 autoConnect: template.autoConnect
               }) as UnityResponse<VisualScriptResponse>;
 
@@ -1816,11 +1869,11 @@ public class ${derivedClassName} : MonoBehaviour
   });
 
   // tools/call
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  server.setRequestHandler(CallToolRequestSchema, async (req: ReturnType<typeof CallToolRequestSchema["parse"]>) => {
     const requestedName = (req.params.name ?? "");
     const canonRequested = canonicalize(requestedName);
-    let tool = toolByCanonical.get(canonRequested);
-    let args = (req.params.arguments ?? {}) as Record<string, unknown>;
+    const tool = toolByCanonical.get(canonRequested);
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
 
     // No aliasing; tools use underscore names only.
 
@@ -1857,7 +1910,7 @@ public class ${derivedClassName} : MonoBehaviour
   });
 
   // resources/read
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+  server.setRequestHandler(ReadResourceRequestSchema, async (req: ReturnType<typeof ReadResourceRequestSchema["parse"]>) => {
     if (req.params.uri !== "unity://logs") {
       return { contents: [] } as unknown as ReturnType<typeof ReadResourceResultSchema["parse"]>;
     }
@@ -1897,9 +1950,9 @@ export async function main() {
         queued = false;
         try {
           // Notify subscribers that logs resource updated
-          // eslint-disable-next-line @typescript-eslint/no-floating-promises
+           
           server.sendResourceUpdated({ uri: "unity://logs" });
-        } catch {}
+        } catch (e) { if (DEBUG) { console.warn(`[unity-mcp] sendResourceUpdated failed: ${e instanceof Error ? e.message : String(e)}`); } }
       }, 500);
     };
     es.onerror = () => {
