@@ -988,6 +988,60 @@ export function getServer() {
       },
     },
     {
+      name: "unity_import",
+      description: "Import a .unitypackage or copy any external file into Assets and refresh",
+      inputSchema: {
+        type: "object",
+        properties: {
+          // .unitypackage path
+          filePath: { type: "string", description: "Path to file. If ends with .unitypackage, imports the package. Otherwise treated as a regular file to copy into Assets (alias for sourcePath)." },
+          interactive: { type: "boolean", description: "When importing a .unitypackage, show Unity's import dialog (default false)." },
+          // Generic file import
+          sourcePath: { type: "string", description: "Absolute path to the source file on disk (used for non-.unitypackage files). If not set, filePath is used when not a .unitypackage." },
+          destPath: { type: "string", description: "Optional project-relative path under Assets (e.g., 'Assets/Textures/My.png'). If omitted, uses destFolder + source file name." },
+          destFolder: { type: "string", description: "Optional folder under Assets (e.g., 'Assets/Textures') when destPath is not provided." },
+          overwrite: { type: "boolean", description: "Overwrite if destination exists (default false)" },
+        },
+      },
+      handler: async (args) => {
+        const { filePath, interactive, sourcePath, destPath, destFolder, overwrite } = args as { filePath?: string; interactive?: boolean; sourcePath?: string; destPath?: string; destFolder?: string; overwrite?: boolean };
+        const trimmedFile = typeof filePath === "string" ? filePath.trim() : undefined;
+        const isPackage = !!(trimmedFile && /\.unitypackage$/i.test(trimmedFile));
+
+        // If a .unitypackage, use the package import endpoint
+        if (isPackage) {
+          try {
+            await callUnity("/unitypackage/import", { path: trimmedFile, interactive: interactive === true }, 0);
+            await callUnity("/assets/refresh", {});
+            await waitForCompileIdle();
+            return { content: [{ type: "text", text: `Imported: ${trimmedFile}` }] };
+          } catch (err) {
+            const msg = (err as Error).message || String(err);
+            return { content: [{ type: "text", text: `Import failed: ${msg}` }], isError: true };
+          }
+        }
+
+        // Otherwise, treat as a general file import (copy into Assets)
+        const resolvedSource = sourcePath || trimmedFile;
+        if (!resolvedSource) {
+          return { content: [{ type: "text", text: "Provide filePath (.unitypackage) or sourcePath (general file)." }], isError: true };
+        }
+        try {
+          const payload = { sourcePath: resolvedSource.trim(), destPath, destFolder, overwrite: overwrite === true };
+          const res = await callUnity<{ path: string }>("/assets/importFile", payload, 0);
+          const importedPath = res?.path || payload.destPath || "";
+          await callUnity("/assets/refresh", {});
+          await waitForCompileIdle();
+          return { content: [{ type: "text", text: importedPath ? `Imported: ${importedPath}` : "Imported" }] };
+        } catch (err) {
+          const msg = (err as Error).message || String(err);
+          return { content: [{ type: "text", text: `Import failed: ${msg}` }], isError: true };
+        }
+      }
+    },
+
+
+    {
       name: "unity_tests",
       description: "Run Unity Test Framework tests (action=run; mode EditMode|PlayMode, filter?)",
       inputSchema: {
@@ -1950,7 +2004,7 @@ export async function main() {
         queued = false;
         try {
           // Notify subscribers that logs resource updated
-           
+
           server.sendResourceUpdated({ uri: "unity://logs" });
         } catch (e) { if (DEBUG) { console.warn(`[unity-mcp] sendResourceUpdated failed: ${e instanceof Error ? e.message : String(e)}`); } }
       }, 500);

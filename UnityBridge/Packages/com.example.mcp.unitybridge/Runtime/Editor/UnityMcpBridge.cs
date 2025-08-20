@@ -930,6 +930,127 @@ namespace MCP.UnityBridge
                         await WriteJson(ctx, Ok(new EmptyResponse()));
                         return;
                     }
+
+                        if (path == "/assets/importFile")
+                        {
+                            var req = JsonUtility.FromJson<ImportFileRequest>(body);
+                            if (req == null || string.IsNullOrEmpty(req.sourcePath))
+                            {
+                                await WriteJson(ctx, Err("sourcePath is required"));
+                                return;
+                            }
+                            await EnsureEditorIdle();
+                            var resp = await RunOnMainThread(() =>
+                            {
+                                try
+                                {
+                                    var src = (req.sourcePath ?? string.Empty).Trim().Replace('\\', '/');
+                                    if (!System.IO.File.Exists(src)) return Err("File not found: " + src);
+
+                                    string destAssetPath = null;
+                                    if (!string.IsNullOrEmpty(req.destPath))
+                                    {
+                                        destAssetPath = req.destPath.Trim().Replace('\\', '/');
+                                        if (!destAssetPath.StartsWith("Assets/")) destAssetPath = "Assets/" + destAssetPath.TrimStart('/');
+                                    }
+                                    else
+                                    {
+                                        var folder = string.IsNullOrEmpty(req.destFolder) ? "Assets" : req.destFolder.Trim().Replace('\\', '/');
+                                        if (!folder.StartsWith("Assets/")) folder = "Assets/" + folder.TrimStart('/');
+                                        var fileName = System.IO.Path.GetFileName(src).Replace('\\', '/');
+                                        destAssetPath = folder.EndsWith("/") ? folder + fileName : folder + "/" + fileName;
+                                    }
+
+                                    var destSysPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Application.dataPath) ?? "", destAssetPath);
+                                    destSysPath = destSysPath.Replace('\\', '/');
+
+                                    // Ensure destination folder exists on disk
+                                    var destDir = System.IO.Path.GetDirectoryName(destSysPath);
+                                    if (!System.IO.Directory.Exists(destDir)) System.IO.Directory.CreateDirectory(destDir);
+
+                                    if (System.IO.File.Exists(destSysPath))
+                                    {
+                                        if (!req.overwrite) return Err("Destination file exists: " + destAssetPath);
+                                        try { System.IO.File.Delete(destSysPath); } catch (Exception ex) { return Err("Failed to overwrite: " + ex.Message); }
+                                    }
+
+                                    try
+                                    {
+                                        System.IO.File.Copy(src, destSysPath, overwrite: false);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        return Err("Copy failed: " + ex.Message);
+                                    }
+
+                                    try { AssetDatabase.ImportAsset(destAssetPath, ImportAssetOptions.ForceSynchronousImport); } catch { }
+                                    try { AssetDatabase.Refresh(); } catch { }
+                                    try { UnityEditorInternal.InternalEditorUtility.RepaintAllViews(); } catch { }
+
+                                    Debug.Log("[MCP Bridge] Imported file to project: " + destAssetPath);
+                                    return Ok(new PathResponse { path = destAssetPath });
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogError($"File import failed: {ex.Message}\n{ex.StackTrace}");
+                                    return Err("Import failed: " + ex.Message);
+                                }
+                            });
+                            await WriteJson(ctx, resp);
+                            return;
+                        }
+
+
+                        if (path == "/unitypackage/import")
+                        {
+                            var req = JsonUtility.FromJson<UnityPackageImportRequest>(body);
+                            if (req == null || string.IsNullOrEmpty(req.path))
+                            {
+                                await WriteJson(ctx, Err("path is required"));
+                                return;
+                            }
+                            // Ensure the editor is idle (not compiling/playing) before import
+                            await EnsureEditorIdle();
+                            var resp = await RunOnMainThread(() =>
+                            {
+                                try
+                                {
+                                    var p = (req.path ?? string.Empty).Trim();
+                                    if (string.IsNullOrEmpty(p)) return (ok: false, json: Err("path is required"));
+                                    // Normalize slashes
+                                    p = p.Replace('\\', '/');
+                                    // Validate file
+                                    if (!System.IO.File.Exists(p)) return (ok: false, json: Err("File not found: " + p));
+                                    if (!p.EndsWith(".unitypackage", StringComparison.OrdinalIgnoreCase)) return (ok: false, json: Err("Invalid file type. Expected .unitypackage"));
+
+                                    Debug.Log("[MCP Bridge] Importing Unity package: " + p);
+                                    try
+                                    {
+                                        // Use non-interactive by default to avoid dialogs; interactive can be requested
+                                        AssetDatabase.ImportPackage(p, req.interactive);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Debug.LogError($"AssetDatabase.ImportPackage failed: {ex.Message}\n{ex.StackTrace}");
+                                        return (ok: false, json: Err("Import failed: " + ex.Message));
+                                    }
+
+                                    try { AssetDatabase.Refresh(); } catch { }
+                                    try { UnityEditorInternal.InternalEditorUtility.RepaintAllViews(); } catch { }
+                                    Debug.Log("[MCP Bridge] Import completed: " + p);
+
+                                    return (ok: true, json: Ok(new MsgResponse { message = "Imported: " + p }));
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogError($"Unity package import failed: {ex.Message}\n{ex.StackTrace}");
+                                    return (ok: false, json: Err("Import failed: " + ex.Message));
+                                }
+                            });
+                            await WriteJson(ctx, resp.json);
+                            return;
+                        }
+
                     if (path == "/hierarchy/get")
                     {
                         var results = await RunOnMainThread(() => GetHierarchyPaths());
@@ -1899,6 +2020,7 @@ namespace MCP.UnityBridge
         [Serializable] private class MsgResponse { public string message; }
         [Serializable] private class CreatedResponse { public int instanceId; public string path; }
         [Serializable] private class PathResponse { public string path; }
+
         [Serializable] private class Vec3 { public float x; public float y; public float z; }
         [Serializable] private class GameObjectInfoResponse {
             public int instanceId; public string path; public string name; public bool active; public string tag; public int layer;
@@ -1924,6 +2046,9 @@ namespace MCP.UnityBridge
         [Serializable] private class ConsoleTextResponse { public string text; }
         [Serializable] private class EditorInfoResponse { public string projectName; public string unityVersion; public string dataPath; }
 
+	        [Serializable] private class ImportFileRequest { public string sourcePath; public string destPath; public string destFolder; public bool overwrite; }
+
+
         [Serializable]
         private class MenuExecuteRequest { public string menuPath; }
 
@@ -1939,6 +2064,9 @@ namespace MCP.UnityBridge
             public string primitive; public string lightType;
             public Vec3 position; public Vec3 localPosition; public Vec3 eulerAngles; public Vec3 localEulerAngles; public Vec3 localScale;
         }
+
+        [Serializable]
+        private class UnityPackageImportRequest { public string path; public bool interactive; }
 
         [Serializable]
         private class GameObjectSetPropertiesRequest
