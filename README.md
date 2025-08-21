@@ -62,6 +62,7 @@ Tools are exposed with underscore names only. Selected highlights:
 - unity_code — Write files, create scripts, attach scripts, compile
 - **unity_visualscripting** — Create visual scripts, add nodes, connect workflows
 - **unity_visualscripting_templates** — Browse, search, and apply workflow templates
+- **unity_import** - Import .unitypackages or copy external files to unity project. 
 
 </details>
 
