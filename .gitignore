@@ -25,3 +25,5 @@ server/dist/
 # Env and local files
 *.env
 server/.env
+.qoder/rules/tools.md
+.gitignore
