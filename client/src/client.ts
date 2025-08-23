@@ -47,7 +47,11 @@ async function main() {
   const call = async (name: string, args: Record<string, unknown> = {}): Promise<McpResult | null> => {
     try {
       const res = await client.callTool({ name, arguments: args }) as McpResult;
-      console.log(`${name} ${JSON.stringify(args)} ->`, JSON.stringify(res));
+      // Optimize logging: avoid double JSON.stringify
+      const argsStr = Object.keys(args).length === 0 ? "{}" : JSON.stringify(args);
+      const resStr = getFirstText(res) || "[no content]";
+      console.log(`${name} ${argsStr} -> ${resStr.length > 200 ? resStr.substring(0, 200) + "..." : resStr}`);
+      
       // After every tool call (except console read itself), read Unity console and print delta
       if (!(name === "unity_console" && (args as Record<string, unknown>)?.action === "read")) {
         try {
@@ -66,7 +70,7 @@ async function main() {
       }
       return res;
     } catch (e) {
-      console.warn(`${name} failed:`, JSON.stringify(e, null, 2));
+      console.warn(`${name} failed:`, (e as Error).message);
       return null;
     }
   };

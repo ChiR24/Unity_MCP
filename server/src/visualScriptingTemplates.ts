@@ -1,5 +1,12 @@
 // Visual Scripting Templates for Unity MCP Bridge
 // Pre-built workflow templates for common game development patterns
+// Provides reusable visual scripting workflows with MCP operation mappings
+
+/**
+ * @fileoverview Visual Scripting Template System
+ * @description Pre-defined templates for common Unity game development workflows
+ * that can be applied to GameObjects via the MCP visual scripting tools.
+ */
 
 export interface VisualScriptTemplate {
   name: string;
@@ -306,32 +313,277 @@ export const VISUAL_SCRIPT_TEMPLATES: Record<string, VisualScriptTemplate> = {
         ports: { from: "OnEnter", to: "Exec" }
       }
     ]
+  },
+
+  // AI and NPC Behaviors
+  "npc_patrol_behavior": {
+    name: "NPC Patrol Behavior",
+    description: "Creates a patrol route with waypoint navigation and basic AI detection",
+    category: "AI & NPC",
+    autoConnect: true,
+    tags: ["ai", "npc", "patrol", "navigation", "behavior"],
+    mcpOperations: [
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "NPC_Patrol", position: { x: 0, y: 1, z: 0 } },
+        description: "Create NPC GameObject",
+        order: 1,
+        nodeType: "action",
+        position: { x: 0, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "NPC_Patrol",
+          componentType: "NavMeshAgent"
+        },
+        description: "Add Navigation Agent",
+        order: 2,
+        nodeType: "action",
+        position: { x: 200, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "NPC_Patrol",
+          componentType: "SphereCollider",
+          properties: { isTrigger: true, radius: 5 }
+        },
+        description: "Add Detection Zone",
+        order: 3,
+        nodeType: "action",
+        position: { x: 400, y: 0, z: 0 }
+      }
+    ]
+  },
+
+  // UI Interaction Systems
+  "ui_button_interaction": {
+    name: "UI Button Interaction",
+    description: "Complete button interaction system with hover effects and click handlers",
+    category: "UI & Interaction",
+    autoConnect: true,
+    tags: ["ui", "button", "interaction", "hover", "click"],
+    mcpOperations: [
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "InteractiveButton" },
+        description: "Create Button GameObject",
+        order: 1,
+        nodeType: "action",
+        position: { x: 0, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "InteractiveButton",
+          componentType: "Button"
+        },
+        description: "Add Button Component",
+        order: 2,
+        nodeType: "action",
+        position: { x: 200, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "InteractiveButton",
+          componentType: "Image",
+          properties: { color: { r: 0.8, g: 0.8, b: 0.8, a: 1 } }
+        },
+        description: "Add Background Image",
+        order: 3,
+        nodeType: "action",
+        position: { x: 400, y: 0, z: 0 }
+      }
+    ]
+  },
+
+  // Audio System
+  "audio_system": {
+    name: "Audio Management System",
+    description: "Complete audio system with background music and sound effects",
+    category: "Audio & Sound",
+    autoConnect: true,
+    tags: ["audio", "sound", "music", "effects", "management"],
+    mcpOperations: [
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "AudioManager" },
+        description: "Create Audio Manager",
+        order: 1,
+        nodeType: "action",
+        position: { x: 0, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "AudioManager",
+          componentType: "AudioSource"
+        },
+        description: "Add Background Music Source",
+        order: 2,
+        nodeType: "action",
+        position: { x: 200, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "AudioManager",
+          componentType: "AudioSource",
+          properties: { playOnAwake: false, loop: false }
+        },
+        description: "Add SFX Source",
+        order: 3,
+        nodeType: "action",
+        position: { x: 400, y: 0, z: 0 }
+      }
+    ]
+  },
+
+  // Particle Effects
+  "particle_effect_system": {
+    name: "Particle Effect System",
+    description: "Configurable particle system with emission controls and color gradients",
+    category: "Effects & Visual",
+    autoConnect: true,
+    tags: ["particles", "effects", "visual", "emission", "color"],
+    mcpOperations: [
+      {
+        tool: "unity_gameObject",
+        action: "create",
+        parameters: { name: "ParticleSystem" },
+        description: "Create Particle System",
+        order: 1,
+        nodeType: "action",
+        position: { x: 0, y: 0, z: 0 }
+      },
+      {
+        tool: "unity_component",
+        action: "add",
+        parameters: {
+          gameObjectPath: "ParticleSystem",
+          componentType: "ParticleSystem",
+          properties: {
+            startLifetime: 2.0,
+            startSpeed: 5.0,
+            startSize: 0.5,
+            startColor: { r: 1, g: 1, b: 0, a: 1 }
+          }
+        },
+        description: "Configure Particle System",
+        order: 2,
+        nodeType: "action",
+        position: { x: 200, y: 0, z: 0 }
+      }
+    ]
   }
 };
 
 // Helper functions for template management
+
+/**
+ * Get all templates belonging to a specific category
+ * @param category - The category name to filter by
+ * @returns Array of templates in the specified category
+ */
 export function getTemplatesByCategory(category: string): VisualScriptTemplate[] {
+  if (!category || typeof category !== 'string') {
+    return [];
+  }
   return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template =>
-    template.category === category
+    template.category.toLowerCase() === category.toLowerCase()
   );
 }
 
+/**
+ * Get templates sorted by relevance score for a search query
+ * @param query - Search query string
+ * @returns Array of templates sorted by relevance
+ */
+export function getTemplatesByRelevance(query: string): VisualScriptTemplate[] {
+  if (!query || typeof query !== 'string') {
+    return Object.values(VISUAL_SCRIPT_TEMPLATES);
+  }
+
+  const lowerQuery = query.toLowerCase();
+  const templates = Object.values(VISUAL_SCRIPT_TEMPLATES);
+
+  return templates.map(template => {
+    let score = 0;
+
+    // Name match gets highest score
+    if (template.name.toLowerCase().includes(lowerQuery)) {
+      score += 10;
+    }
+
+    // Category match
+    if (template.category.toLowerCase().includes(lowerQuery)) {
+      score += 5;
+    }
+
+    // Tag matches
+    template.tags.forEach(tag => {
+      if (tag.toLowerCase().includes(lowerQuery)) {
+        score += 3;
+      }
+    });
+
+    // Description match
+    if (template.description.toLowerCase().includes(lowerQuery)) {
+      score += 2;
+    }
+
+    return { template, score };
+  })
+  .filter(item => item.score > 0)
+  .sort((a, b) => b.score - a.score)
+  .map(item => item.template);
+}
+
+/**
+ * Get all templates that have a specific tag
+ * @param tag - The tag to filter by
+ * @returns Array of templates that include the specified tag
+ */
 export function getTemplatesByTag(tag: string): VisualScriptTemplate[] {
   return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template =>
     template.tags.includes(tag)
   );
 }
 
+/**
+ * Get all available template categories
+ * @returns Sorted array of unique category names
+ */
 export function getAllCategories(): string[] {
   const categories = new Set(Object.values(VISUAL_SCRIPT_TEMPLATES).map(t => t.category));
   return Array.from(categories).sort();
 }
 
+/**
+ * Get all available template tags
+ * @returns Sorted array of unique tag names
+ */
 export function getAllTags(): string[] {
   const tags = new Set(Object.values(VISUAL_SCRIPT_TEMPLATES).flatMap(t => t.tags));
   return Array.from(tags).sort();
 }
 
+/**
+ * Search templates by name, description, or tags
+ * @param query - Search query string (case-insensitive)
+ * @returns Array of templates matching the search criteria
+ */
 export function searchTemplates(query: string): VisualScriptTemplate[] {
   const lowerQuery = query.toLowerCase();
   return Object.values(VISUAL_SCRIPT_TEMPLATES).filter(template =>
@@ -339,4 +591,93 @@ export function searchTemplates(query: string): VisualScriptTemplate[] {
     template.description.toLowerCase().includes(lowerQuery) ||
     template.tags.some(tag => tag.toLowerCase().includes(lowerQuery))
   );
+}
+
+/**
+ * Validate a template structure
+ * @param template - Template to validate
+ * @returns True if template is valid, false otherwise
+ */
+export function validateTemplate(template: VisualScriptTemplate): boolean {
+  if (!template.name || !template.description || !template.category) {
+    return false;
+  }
+
+  if (!Array.isArray(template.mcpOperations) || template.mcpOperations.length === 0) {
+    return false;
+  }
+
+  // Validate each operation
+  for (const op of template.mcpOperations) {
+    if (!op.tool || !op.action || typeof op.order !== 'number') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Get template statistics
+ * @returns Object with various template statistics
+ */
+export function getTemplateStatistics(): {
+  total: number;
+  byCategory: Record<string, number>;
+  byTag: Record<string, number>;
+  mostPopularTags: string[];
+  averageOperations: number;
+} {
+  const templates = Object.values(VISUAL_SCRIPT_TEMPLATES);
+  const total = templates.length;
+
+  const byCategory: Record<string, number> = {};
+  const byTag: Record<string, number> = {};
+  let totalOperations = 0;
+
+  templates.forEach(template => {
+    // Count categories
+    byCategory[template.category] = (byCategory[template.category] || 0) + 1;
+
+    // Count tags
+    template.tags.forEach(tag => {
+      byTag[tag] = (byTag[tag] || 0) + 1;
+    });
+
+    // Count operations
+    totalOperations += template.mcpOperations.length;
+  });
+
+  const mostPopularTags = Object.entries(byTag)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([tag]) => tag);
+
+  return {
+    total,
+    byCategory,
+    byTag,
+    mostPopularTags,
+    averageOperations: total > 0 ? Math.round(totalOperations / total * 100) / 100 : 0
+  };
+}
+
+/**
+ * Get random template from a category
+ * @param category - Optional category to filter by
+ * @returns Random template or null if no templates found
+ */
+export function getRandomTemplate(category?: string): VisualScriptTemplate | null {
+  let templates = Object.values(VISUAL_SCRIPT_TEMPLATES);
+
+  if (category) {
+    templates = templates.filter(t => t.category.toLowerCase() === category.toLowerCase());
+  }
+
+  if (templates.length === 0) {
+    return null;
+  }
+
+  const randomIndex = Math.floor(Math.random() * templates.length);
+  return templates[randomIndex];
 }

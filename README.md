@@ -150,7 +150,7 @@ The server includes automatic console verification. Configure with environment v
 {
   "unity-mcp": {
     "command": "node",
-    "args": ["PathToFile/MCP/server/dist/index.js"],
+    "args": ["PathToFile/server/dist/index.js"],
     "env": {
       "UNITY_BRIDGE_URL": "http://127.0.0.1:58888",
       "UNITY_CONSOLE_VERIFICATION": "true",

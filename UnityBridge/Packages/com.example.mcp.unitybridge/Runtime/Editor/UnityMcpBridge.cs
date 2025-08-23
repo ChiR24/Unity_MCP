@@ -136,7 +136,10 @@ namespace MCP.UnityBridge
                 }
                 _listener.Close();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MCP Bridge] Failed to stop HTTP listener: {ex.Message}");
+            }
             finally
             {
                 _listener = null;
@@ -177,7 +180,6 @@ namespace MCP.UnityBridge
                     {
                         body = await reader.ReadToEndAsync();
                     }
-                    try { LogBridge($"-> {path} {Trunc(body, 512)}"); } catch { }
 
                     if (path == "/menu/execute" || path == "/editor/executeMenuItem")
                     {
@@ -1271,8 +1273,14 @@ namespace MCP.UnityBridge
                         {
                             lock (SseLock)
                             {
-                                try { res.OutputStream.Close(); } catch { }
-                                SseClients.Remove(res);
+                                try
+                                {
+                                    SseClients.Remove(res);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogError($"[MCP Bridge] Failed to close SSE client connection: {ex.Message}");
+                                }
                             }
                         }
                     });
